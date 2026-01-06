@@ -1171,14 +1171,18 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 ]
                                 
                                 with st.spinner("Generating Circos plot..."):
-                                    result = subprocess.run(
-                                        cmd,
-                                        capture_output=True,
-                                        text=True,
-                                        timeout=60  # 60 second timeout
-                                    )
+                                    try:
+                                        result = subprocess.run(
+                                            cmd,
+                                            capture_output=True,
+                                            text=True,
+                                            timeout=60  # 60 second timeout
+                                        )
+                                    except FileNotFoundError:
+                                        st.error("R is not installed on this server. Please check packages.txt.")
+                                        result = None
                                 
-                                if result.returncode == 0:
+                                if result is not None and result.returncode == 0:
                                     # Check if output file was created
                                     if os.path.exists(output_file):
                                         st.image(output_file, use_container_width=True)
@@ -1186,7 +1190,7 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                         st.error(f"R script completed but output file not found at {output_file}")
                                         if result.stderr:
                                             st.code(result.stderr, language='text')
-                                else:
+                                elif result is not None:
                                     st.error("Error generating Circos plot.")
                                     if result.stderr:
                                         st.code(result.stderr, language='text')
