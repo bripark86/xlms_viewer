@@ -1,6 +1,3 @@
 r-base-core
-r-cran-circlize
-r-cran-dplyr
-r-cran-readr
-r-cran-rcolorbrewer
 libgl1
+libxrender1
