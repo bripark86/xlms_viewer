@@ -1113,18 +1113,37 @@ if plot_button or st.session_state.plot_data_circos is not None:
                     
                     # Save dataframes to CSV
                     try:
-                        # Prepare links_df for R (ensure required columns exist)
-                        links_export = links_df[['P1_clean', 'LinkPos1', 'P2_clean', 'LinkPos2']].copy()
-                        if 'NumPSMs' in links_df.columns:
-                            links_export['NumPSMs'] = links_df['NumPSMs']
-                        elif 'Score' in links_df.columns:
-                            links_export['Score'] = links_df['Score']
+                        # Ensure P1_clean and P2_clean match sector_df names exactly
+                        # Get valid protein names from sector_df
+                        valid_protein_names = set(sector_df['name'].unique())
+                        
+                        # Filter links to only include those where both proteins exist in sector_df
+                        links_df_filtered = links_df[
+                            (links_df['P1_clean'].isin(valid_protein_names)) &
+                            (links_df['P2_clean'].isin(valid_protein_names))
+                        ].copy()
+                        
+                        if links_df_filtered.empty:
+                            st.warning("No links found matching the selected proteins. Please check your protein selection.")
                         else:
-                            links_export['Score'] = 1.0
+                            # Prepare links_df for R (ensure required columns exist)
+                            links_export = links_df_filtered[['P1_clean', 'LinkPos1', 'P2_clean', 'LinkPos2']].copy()
+                            if 'NumPSMs' in links_df_filtered.columns:
+                                links_export['NumPSMs'] = links_df_filtered['NumPSMs']
+                            elif 'Score' in links_df_filtered.columns:
+                                links_export['Score'] = links_df_filtered['Score']
+                            else:
+                                links_export['Score'] = 1.0
+                            
+                            # Verify column names before saving
+                            required_cols = ['P1_clean', 'LinkPos1', 'P2_clean', 'LinkPos2']
+                            if not all(col in links_export.columns for col in required_cols):
+                                missing = [col for col in required_cols if col not in links_export.columns]
+                                st.error(f"Missing required columns in links data: {missing}")
+                            else:
+                                links_export.to_csv(links_file, index=False)
                         
-                        links_export.to_csv(links_file, index=False)
-                        
-                        # Prepare sector_df for R
+                        # Prepare sector_df for R (always prepare, even if no links)
                         sector_export = sector_df[['name', 'start', 'end']].copy()
                         sector_export.to_csv(sectors_file, index=False)
                         
@@ -1136,79 +1155,80 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             # Create empty file with correct structure
                             pd.DataFrame(columns=['chr', 'start', 'end', 'name']).to_csv(annots_file, index=False)
                         
-                        # Call R script
-                        r_script_path = "r_scripts/generate_circos.R"
-                        
-                        if not os.path.exists(r_script_path):
-                            st.error(f"R script not found at {r_script_path}. Please ensure the script exists.")
-                        else:
-                            # Run R script
-                            cmd = [
-                                "Rscript",
-                                r_script_path,
-                                links_file,
-                                sectors_file,
-                                annots_file,
-                                output_file
-                            ]
+                        # Call R script only if we have links
+                        if not links_df_filtered.empty:
+                            r_script_path = "r_scripts/generate_circos.R"
                             
-                            with st.spinner("Generating Circos plot..."):
-                                result = subprocess.run(
-                                    cmd,
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=60  # 60 second timeout
-                                )
-                            
-                            if result.returncode == 0:
-                                # Check if output file was created
-                                if os.path.exists(output_file):
-                                    st.image(output_file, use_container_width=True)
-                                    
-                                    # Download buttons for Circos Plot
-                                    with open(output_file, 'rb') as f:
-                                        circos_img_bytes = f.read()
-                                    
-                                    circos_dl_col1, circos_dl_col2 = st.columns(2)
-                                    with circos_dl_col1:
-                                        st.download_button(
-                                            label="📥 Download as PNG",
-                                            data=circos_img_bytes,
-                                            file_name=f"circos_plot_{selected_dataset_key}.png",
-                                            mime="image/png"
-                                        )
-                                    with circos_dl_col2:
-                                        # Convert PNG to PDF using PIL if available
-                                        try:
-                                            from PIL import Image
-                                            import io
-                                            img = Image.open(io.BytesIO(circos_img_bytes))
-                                            pdf_buffer = io.BytesIO()
-                                            # Convert to RGB if necessary (PDF doesn't support RGBA)
-                                            if img.mode == 'RGBA':
-                                                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-                                                rgb_img.paste(img, mask=img.split()[3])
-                                                img = rgb_img
-                                            img.save(pdf_buffer, format='PDF')
-                                            pdf_bytes = pdf_buffer.getvalue()
+                            if not os.path.exists(r_script_path):
+                                st.error(f"R script not found at {r_script_path}. Please ensure the script exists.")
+                            else:
+                                # Run R script
+                                cmd = [
+                                    "Rscript",
+                                    r_script_path,
+                                    links_file,
+                                    sectors_file,
+                                    annots_file,
+                                    output_file
+                                ]
+                                
+                                with st.spinner("Generating Circos plot..."):
+                                    result = subprocess.run(
+                                        cmd,
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=60  # 60 second timeout
+                                    )
+                                
+                                if result.returncode == 0:
+                                    # Check if output file was created
+                                    if os.path.exists(output_file):
+                                        st.image(output_file, use_container_width=True)
+                                        
+                                        # Download buttons for Circos Plot
+                                        with open(output_file, 'rb') as f:
+                                            circos_img_bytes = f.read()
+                                        
+                                        circos_dl_col1, circos_dl_col2 = st.columns(2)
+                                        with circos_dl_col1:
                                             st.download_button(
-                                                label="📥 Download as PDF",
-                                                data=pdf_bytes,
-                                                file_name=f"circos_plot_{selected_dataset_key}.pdf",
-                                                mime="application/pdf"
+                                                label="📥 Download as PNG",
+                                                data=circos_img_bytes,
+                                                file_name=f"circos_plot_{selected_dataset_key}.png",
+                                                mime="image/png"
                                             )
-                                        except ImportError:
-                                            st.info("PDF requires PIL/Pillow")
-                                        except Exception:
-                                            st.info("PDF conversion failed")
+                                        with circos_dl_col2:
+                                            # Convert PNG to PDF using PIL if available
+                                            try:
+                                                from PIL import Image
+                                                import io
+                                                img = Image.open(io.BytesIO(circos_img_bytes))
+                                                pdf_buffer = io.BytesIO()
+                                                # Convert to RGB if necessary (PDF doesn't support RGBA)
+                                                if img.mode == 'RGBA':
+                                                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                                                    rgb_img.paste(img, mask=img.split()[3])
+                                                    img = rgb_img
+                                                img.save(pdf_buffer, format='PDF')
+                                                pdf_bytes = pdf_buffer.getvalue()
+                                                st.download_button(
+                                                    label="📥 Download as PDF",
+                                                    data=pdf_bytes,
+                                                    file_name=f"circos_plot_{selected_dataset_key}.pdf",
+                                                    mime="application/pdf"
+                                                )
+                                            except ImportError:
+                                                st.info("PDF requires PIL/Pillow")
+                                            except Exception:
+                                                st.info("PDF conversion failed")
+                                    else:
+                                        st.error(f"R script completed but output file not found at {output_file}")
+                                        if result.stderr:
+                                            st.code(result.stderr, language='text')
                                 else:
-                                    st.error(f"R script completed but output file not found at {output_file}")
+                                    st.error("Error generating Circos plot.")
                                     if result.stderr:
                                         st.code(result.stderr, language='text')
-                            else:
-                                st.error("Error generating Circos plot.")
-                                if result.stderr:
-                                    st.code(result.stderr, language='text')
                     
                     except Exception as e:
                         st.error(f"Error: {str(e)}")

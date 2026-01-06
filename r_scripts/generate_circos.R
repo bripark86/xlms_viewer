@@ -18,6 +18,19 @@ links_df <- read_csv(links_file, show_col_types = FALSE)
 sector_df <- read_csv(sectors_file, show_col_types = FALSE)
 annotations_bed <- read_csv(annots_file, show_col_types = FALSE)
 
+# Sanity check: Verify required columns exist
+if (!("P1_clean" %in% colnames(links_df))) {
+  stop("Error: Input CSV is missing 'P1_clean' column.")
+}
+if (!("P2_clean" %in% colnames(links_df))) {
+  stop("Error: Input CSV is missing 'P2_clean' column.")
+}
+print(paste("Plotting", nrow(links_df), "links..."))
+print(paste("Sectors:", nrow(sector_df), "proteins"))
+print(paste("Unique P1_clean values:", length(unique(links_df$P1_clean))))
+print(paste("Unique P2_clean values:", length(unique(links_df$P2_clean))))
+print(paste("Sector names:", paste(sector_df$name, collapse=", ")))
+
 # --- 1. Define Color Palette (Exact Match) ---
 fixed_palette <- c("SMARCA4"="#558B2F", "SMCA4"="#558B2F", "BRG1"="#558B2F",
                    "SMARCA2"="#6B8E23", "SMCA2"="#6B8E23", "BRM"="#6B8E23",
