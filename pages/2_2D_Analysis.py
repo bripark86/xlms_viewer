@@ -1160,6 +1160,11 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             if not os.path.exists(r_script_path):
                                 st.error(f"R script not found at {r_script_path}. Please ensure the script exists.")
                             else:
+                                # Debug: Check if Rscript exists
+                                import shutil
+                                r_path = shutil.which("Rscript")
+                                st.write(f"DEBUG: Rscript path found at: {r_path}")
+                                
                                 # Run R script
                                 cmd = [
                                     "Rscript",
