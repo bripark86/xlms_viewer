@@ -1,0 +1,6 @@
+streamlit>=1.28.0
+stmol>=0.0.12
+py3dmol>=2.0.4
+biopython>=1.81
+pandas>=2.0.0
+numpy>=1.24.0
