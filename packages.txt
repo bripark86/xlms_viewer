@@ -1,6 +1,6 @@
-r-base
-r-base-dev
-libblas3
-liblapack3
-libgfortran5
+r-base-core
+r-cran-circlize
+r-cran-dplyr
+r-cran-readr
+r-cran-rcolorbrewer
 libgl1
