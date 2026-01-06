@@ -460,7 +460,7 @@ def generate_linear_plot(plot_data, show_intra_links=True):
                 
                 # Control points for cubic Bézier curve
                 control_offset = abs(x_end - x_start) * 0.4  # Horizontal offset for control points
-                arc_height = abs(x_end - x_start) * 0.2  # Height of arc
+                arc_height = abs(x_end - x_start) * 0.1  # Smaller height for shallower loops (reduced from 0.2)
                 
                 # Generate Bézier curve points
                 n_points = 50
@@ -472,11 +472,11 @@ def generate_linear_plot(plot_data, show_intra_links=True):
                           3*(1-t)*t**2 * (x_end - control_offset) + 
                           t**3 * x_end)
                 
-                # Y curve loops upward
-                y_curve = ((1-t)**3 * (y_pos + 0.2) + 
-                          3*(1-t)**2*t * (y_pos + 0.2 + arc_height) + 
-                          3*(1-t)*t**2 * (y_pos + 0.2 + arc_height) + 
-                          t**3 * (y_pos + 0.2))
+                # Y curve loops downward (below the track)
+                y_curve = ((1-t)**3 * (y_pos - 0.2) + 
+                          3*(1-t)**2*t * (y_pos - 0.2 - arc_height) + 
+                          3*(1-t)*t**2 * (y_pos - 0.2 - arc_height) + 
+                          t**3 * (y_pos - 0.2))
                 
                 fig.add_trace(go.Scatter(
                     x=x_curve,
@@ -1089,6 +1089,14 @@ if plot_button or st.session_state.plot_data_circos is not None:
                 # Create side-by-side columns: Circos (left) and Linear (right)
                 col1, col2 = st.columns([1, 1])
                 
+                # Prepare file paths (defined at higher scope for download section)
+                temp_dir = "temp"
+                os.makedirs(temp_dir, exist_ok=True)
+                links_file = os.path.join(temp_dir, "temp_links.csv")
+                sectors_file = os.path.join(temp_dir, "temp_sectors.csv")
+                annots_file = os.path.join(temp_dir, "temp_annots.csv")
+                output_file = os.path.join(temp_dir, "circos_plot.png")
+                
                 with col1:
                     st.subheader("Circos Plot")
                     # Generate Circos plot
@@ -1100,16 +1108,6 @@ if plot_button or st.session_state.plot_data_circos is not None:
                     # Filter intra-links if needed
                     if not show_intra_links:
                         links_df = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
-                    
-                    # Ensure temp directory exists
-                    temp_dir = "temp"
-                    os.makedirs(temp_dir, exist_ok=True)
-                    
-                    # Prepare file paths
-                    links_file = os.path.join(temp_dir, "temp_links.csv")
-                    sectors_file = os.path.join(temp_dir, "temp_sectors.csv")
-                    annots_file = os.path.join(temp_dir, "temp_annots.csv")
-                    output_file = os.path.join(temp_dir, "circos_plot.png")
                     
                     # Save dataframes to CSV
                     try:
@@ -1184,43 +1182,6 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                     # Check if output file was created
                                     if os.path.exists(output_file):
                                         st.image(output_file, use_container_width=True)
-                                        
-                                        # Download buttons for Circos Plot
-                                        with open(output_file, 'rb') as f:
-                                            circos_img_bytes = f.read()
-                                        
-                                        circos_dl_col1, circos_dl_col2 = st.columns(2)
-                                        with circos_dl_col1:
-                                            st.download_button(
-                                                label="📥 Download as PNG",
-                                                data=circos_img_bytes,
-                                                file_name=f"circos_plot_{selected_dataset_key}.png",
-                                                mime="image/png"
-                                            )
-                                        with circos_dl_col2:
-                                            # Convert PNG to PDF using PIL if available
-                                            try:
-                                                from PIL import Image
-                                                import io
-                                                img = Image.open(io.BytesIO(circos_img_bytes))
-                                                pdf_buffer = io.BytesIO()
-                                                # Convert to RGB if necessary (PDF doesn't support RGBA)
-                                                if img.mode == 'RGBA':
-                                                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-                                                    rgb_img.paste(img, mask=img.split()[3])
-                                                    img = rgb_img
-                                                img.save(pdf_buffer, format='PDF')
-                                                pdf_bytes = pdf_buffer.getvalue()
-                                                st.download_button(
-                                                    label="📥 Download as PDF",
-                                                    data=pdf_bytes,
-                                                    file_name=f"circos_plot_{selected_dataset_key}.pdf",
-                                                    mime="application/pdf"
-                                                )
-                                            except ImportError:
-                                                st.info("PDF requires PIL/Pillow")
-                                            except Exception:
-                                                st.info("PDF conversion failed")
                                     else:
                                         st.error(f"R script completed but output file not found at {output_file}")
                                         if result.stderr:
@@ -1239,33 +1200,83 @@ if plot_button or st.session_state.plot_data_circos is not None:
                     st.subheader("Interactive Linear Plot")
                     if fig_linear:
                         st.plotly_chart(fig_linear, use_container_width=True)
-                        
-                        # Download buttons for Linear Plot
-                        linear_dl_col1, linear_dl_col2 = st.columns(2)
-                        with linear_dl_col1:
-                            try:
-                                img_bytes = fig_linear.to_image(format="png", width=1200, height=800)
-                                st.download_button(
-                                    label="📥 Download as PNG",
-                                    data=img_bytes,
-                                    file_name=f"linear_plot_{selected_dataset_key}.png",
-                                    mime="image/png"
-                                )
-                            except Exception:
-                                st.info("PNG requires kaleido")
-                        with linear_dl_col2:
-                            try:
-                                pdf_bytes = fig_linear.to_image(format="pdf", width=1200, height=800)
-                                st.download_button(
-                                    label="📥 Download as PDF",
-                                    data=pdf_bytes,
-                                    file_name=f"linear_plot_{selected_dataset_key}.pdf",
-                                    mime="application/pdf"
-                                )
-                            except Exception:
-                                st.info("PDF requires kaleido")
                     else:
                         st.warning("Could not generate linear plot.")
+                
+                # Consolidated Download Section
+                if st.session_state.plot_data_circos:
+                    with st.expander("📥 DOWNLOAD PLOTS", expanded=True):
+                        d_col1, d_col2 = st.columns(2)
+                        
+                        with d_col1:
+                            st.markdown("#### Circos Plot")
+                            # Check if Circos plot exists
+                            if os.path.exists(output_file):
+                                with open(output_file, 'rb') as f:
+                                    circos_img_bytes = f.read()
+                                
+                                # PNG download
+                                st.download_button(
+                                    label="📥 Download as PNG",
+                                    data=circos_img_bytes,
+                                    file_name=f"circos_plot_{selected_dataset_key}.png",
+                                    mime="image/png"
+                                )
+                                
+                                # PDF download
+                                try:
+                                    from PIL import Image
+                                    import io
+                                    img = Image.open(io.BytesIO(circos_img_bytes))
+                                    pdf_buffer = io.BytesIO()
+                                    # Convert to RGB if necessary (PDF doesn't support RGBA)
+                                    if img.mode == 'RGBA':
+                                        rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                                        rgb_img.paste(img, mask=img.split()[3])
+                                        img = rgb_img
+                                    img.save(pdf_buffer, format='PDF')
+                                    pdf_bytes = pdf_buffer.getvalue()
+                                    st.download_button(
+                                        label="📥 Download as PDF",
+                                        data=pdf_bytes,
+                                        file_name=f"circos_plot_{selected_dataset_key}.pdf",
+                                        mime="application/pdf"
+                                    )
+                                except ImportError:
+                                    st.info("PDF requires PIL/Pillow")
+                                except Exception:
+                                    st.info("PDF conversion failed")
+                            else:
+                                st.info("Generate the plot first to enable download.")
+                        
+                        with d_col2:
+                            st.markdown("#### Linear Plot")
+                            if fig_linear:
+                                # PNG download
+                                try:
+                                    img_bytes = fig_linear.to_image(format="png", width=1200, height=800, engine="kaleido")
+                                    st.download_button(
+                                        label="📥 Download as PNG",
+                                        data=img_bytes,
+                                        file_name=f"linear_plot_{selected_dataset_key}.png",
+                                        mime="image/png"
+                                    )
+                                except Exception:
+                                    st.info("PNG requires kaleido")
+                                
+                                # PDF download
+                                try:
+                                    pdf_bytes = fig_linear.to_image(format="pdf", width=1200, height=800, engine="kaleido")
+                                    st.download_button(
+                                        label="📥 Download as PDF",
+                                        data=pdf_bytes,
+                                        file_name=f"linear_plot_{selected_dataset_key}.pdf",
+                                        mime="application/pdf"
+                                    )
+                                except Exception:
+                                    st.info("PDF requires kaleido")
+                            else:
+                                st.info("Generate the plot first to enable download.")
             else:
                 st.info("Click 'Generate Plot' to create visualizations.")
             
