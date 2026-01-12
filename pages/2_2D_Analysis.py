@@ -326,7 +326,7 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
 # SECTION 3: VISUALIZATION FUNCTIONS
 # ===================================================================
 
-def generate_linear_plot(plot_data, show_intra_links=True):
+def generate_linear_plot(plot_data, show_intra_links=True, min_sequence_distance=10):
     """Generate publication-quality interactive linear plot using Plotly."""
     if plot_data is None or plot_data['sector_df'].empty:
         return None
@@ -409,7 +409,7 @@ def generate_linear_plot(plot_data, show_intra_links=True):
         links_df['AlphaValue'] = 1.0
         score_col = None
     
-    # Normalize alpha values for better visibility
+    # Normalize alpha values for better visibility (range: 0.3 to 1.0)
     if links_df['AlphaValue'].max() > links_df['AlphaValue'].min():
         min_val = links_df['AlphaValue'].min()
         max_val = links_df['AlphaValue'].max()
@@ -423,6 +423,13 @@ def generate_linear_plot(plot_data, show_intra_links=True):
         (links_df['P1_clean'] == links_df['P2_clean']) & 
         (links_df['LinkPos1'] != links_df['LinkPos2'])
     ].copy()
+    
+    # Calculate link distances for intra-links and filter by minimum sequence distance
+    if not intra_links.empty:
+        intra_links['link_distance'] = abs(intra_links['LinkPos1'] - intra_links['LinkPos2'])
+        # Filter by minimum sequence distance to reduce clutter
+        if min_sequence_distance > 0:
+            intra_links = intra_links[intra_links['link_distance'] >= min_sequence_distance].copy()
     
     # Add inter-links (thin, transparent straight lines)
     for _, link in inter_links.iterrows():
@@ -454,9 +461,15 @@ def generate_linear_plot(plot_data, show_intra_links=True):
                 y_pos = y_positions[p1]
                 color = color_palette.get(p1, '#808080')
                 alpha = link['AlphaValue']
-                score_text = f" | Score: {link[score_col]:.2f}" if score_col else ""
                 
-                # Create Bézier curve for smooth arc (loops upward)
+                # Get score and distance for tooltip
+                pos1 = int(link['LinkPos1'])
+                pos2 = int(link['LinkPos2'])
+                distance = int(link.get('link_distance', abs(pos1 - pos2)))
+                score_val = link[score_col] if score_col else None
+                score_text = f"<br>Score: {score_val:.2f}" if score_val is not None else ""
+                
+                # Create Bézier curve for smooth arc (loops downward)
                 x_start = link['LinkPos1']
                 x_end = link['LinkPos2']
                 
@@ -480,6 +493,15 @@ def generate_linear_plot(plot_data, show_intra_links=True):
                           3*(1-t)*t**2 * (y_pos - 0.2 - arc_height) + 
                           t**3 * (y_pos - 0.2))
                 
+                # Enhanced tooltip with distance
+                hovertemplate = (
+                    f"<b>{p1}</b><br>"
+                    f"Position 1: {pos1}<br>"
+                    f"Position 2: {pos2}<br>"
+                    f"Distance: {distance} residues{score_text}"
+                    "<extra></extra>"
+                )
+                
                 fig.add_trace(go.Scatter(
                     x=x_curve,
                     y=y_curve,
@@ -487,7 +509,8 @@ def generate_linear_plot(plot_data, show_intra_links=True):
                     line=dict(color=color, width=2, smoothing=1.3),
                     opacity=alpha,
                     showlegend=False,
-                    hovertemplate=f"<b>{p1}</b> (Pos {link['LinkPos1']} <-> Pos {link['LinkPos2']}){score_text}<extra></extra>"
+                    hovertemplate=hovertemplate,
+                    customdata=[[pos1, pos2, distance, score_val if score_val is not None else 'N/A']]
                 ))
     
     # Update layout for publication quality
@@ -993,6 +1016,16 @@ with st.sidebar:
         key="show_intra_links"
     )
     
+    min_sequence_distance = st.slider(
+        "Min. Sequence Distance (Residues)",
+        min_value=0,
+        max_value=100,
+        value=10,
+        step=1,
+        help="Filter out intra-protein links with distance less than this value to reduce clutter",
+        key="min_sequence_distance"
+    )
+    
     plot_button = st.button("Generate Plot", type="primary", use_container_width=True)
     
     st.divider()
@@ -1085,7 +1118,8 @@ if plot_button or st.session_state.plot_data_circos is not None:
                 # Generate Linear plot once (reused for display and download)
                 fig_linear = generate_linear_plot(
                     st.session_state.plot_data_circos,
-                    show_intra_links=show_intra_links
+                    show_intra_links=show_intra_links,
+                    min_sequence_distance=min_sequence_distance
                 )
                 
                 # Create side-by-side columns: Circos (left) and Linear (right)
