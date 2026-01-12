@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
+import altair as alt
 import os
 import re
 import subprocess
@@ -427,7 +428,7 @@ def generate_linear_plot(plot_data, show_intra_links=True, min_sequence_distance
     # Calculate link distances for intra-links and filter by minimum sequence distance
     if not intra_links.empty:
         intra_links['link_distance'] = abs(intra_links['LinkPos1'] - intra_links['LinkPos2'])
-        # Filter by minimum sequence distance to reduce clutter
+        # Strict filtering: only keep links where distance >= min_sequence_distance
         if min_sequence_distance > 0:
             intra_links = intra_links[intra_links['link_distance'] >= min_sequence_distance].copy()
     
@@ -454,6 +455,9 @@ def generate_linear_plot(plot_data, show_intra_links=True, min_sequence_distance
     
     # Add intra-links (Bézier curves) if enabled
     if show_intra_links and not intra_links.empty:
+        # Calculate max distance for normalization (before iterating)
+        max_distance = intra_links['link_distance'].max() if not intra_links.empty else 1
+        
         for _, link in intra_links.iterrows():
             p1 = link['P1_clean']
             
@@ -475,7 +479,13 @@ def generate_linear_plot(plot_data, show_intra_links=True, min_sequence_distance
                 
                 # Control points for cubic Bézier curve
                 control_offset = abs(x_end - x_start) * 0.4  # Horizontal offset for control points
-                arc_height = abs(x_end - x_start) * 0.1  # Smaller height for shallower loops (reduced from 0.2)
+                # Map arc height to distance: longer links = taller arcs, shorter links = lower arcs
+                # Normalize distance to a reasonable arc height range (0.05 to 0.3)
+                if max_distance > 0:
+                    # Scale arc height based on distance relative to max distance
+                    arc_height = 0.05 + (distance / max_distance) * 0.25  # Range: 0.05 to 0.3
+                else:
+                    arc_height = 0.1  # Default fallback
                 
                 # Generate Bézier curve points
                 n_points = 50
@@ -545,6 +555,95 @@ def generate_linear_plot(plot_data, show_intra_links=True, min_sequence_distance
     )
     
     return fig
+
+def generate_contact_map(plot_data, show_intra_links=True, min_sequence_distance=10):
+    """Generate interactive contact map heatmap using Altair."""
+    if plot_data is None or plot_data['links_df'].empty:
+        return None
+    
+    links_df = plot_data['links_df'].copy()
+    
+    # Determine score column
+    if 'NumPSMs' in links_df.columns:
+        score_col = 'NumPSMs'
+    elif 'Score' in links_df.columns:
+        score_col = 'Score'
+    else:
+        score_col = None
+    
+    # Filter for intra-links if needed
+    if show_intra_links:
+        contact_df = links_df[
+            (links_df['P1_clean'] == links_df['P2_clean']) & 
+            (links_df['LinkPos1'] != links_df['LinkPos2'])
+        ].copy()
+    else:
+        contact_df = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
+    
+    if contact_df.empty:
+        return None
+    
+    # Calculate distance and filter by minimum sequence distance
+    contact_df['distance'] = abs(contact_df['LinkPos1'] - contact_df['LinkPos2'])
+    if min_sequence_distance > 0:
+        contact_df = contact_df[contact_df['distance'] >= min_sequence_distance].copy()
+    
+    if contact_df.empty:
+        return None
+    
+    # Prepare data for contact map
+    # For intra-links, use P1 and P2 positions
+    # Ensure P1 <= P2 for symmetric display (upper triangle)
+    contact_map_data = []
+    for _, row in contact_df.iterrows():
+        pos1 = int(row['LinkPos1'])
+        pos2 = int(row['LinkPos2'])
+        # Ensure P1 <= P2 for symmetric heatmap
+        p1_val = min(pos1, pos2)
+        p2_val = max(pos1, pos2)
+        
+        contact_map_data.append({
+            'P1': p1_val,
+            'P2': p2_val,
+            'Score': row[score_col] if score_col else row['distance'],
+            'Distance': int(row['distance']),
+            'Protein': row['P1_clean']
+        })
+    
+    contact_map_df = pd.DataFrame(contact_map_data)
+    
+    # Create Altair chart
+    base = alt.Chart(contact_map_df)
+    
+    # Build tooltip list
+    tooltip_list = [
+        alt.Tooltip('P1:Q', title='Position 1'),
+        alt.Tooltip('P2:Q', title='Position 2'),
+        alt.Tooltip('Distance:Q', title='Distance (residues)'),
+        alt.Tooltip('Protein:N', title='Protein')
+    ]
+    if score_col:
+        tooltip_list.insert(2, alt.Tooltip('Score:Q', title='Score', format='.2f'))
+    
+    chart = base.mark_rect(
+        size=8
+    ).encode(
+        x=alt.X('P1:Q', title='Residue Position 1', scale=alt.Scale(nice=True)),
+        y=alt.Y('P2:Q', title='Residue Position 2', scale=alt.Scale(nice=True)),
+        color=alt.Color(
+            'Score:Q',
+            title='Score' if score_col else 'Distance',
+            scale=alt.Scale(scheme='viridis'),
+            legend=alt.Legend(title='Score' if score_col else 'Distance')
+        ),
+        tooltip=tooltip_list
+    ).properties(
+        width=600,
+        height=600,
+        title='Contact Map (Intra-protein Links)'
+    ).interactive()
+    
+    return chart
 
 def generate_circos_plot(plot_data, show_intra_links=True):
     """Generate interactive circos plot using Plotly polar coordinates."""
@@ -1249,11 +1348,28 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         st.code(traceback.format_exc(), language='text')
                 
                 with col2:
-                    st.subheader("Interactive Linear Plot")
-                    if fig_linear:
-                        st.plotly_chart(fig_linear, use_container_width=True)
-                    else:
-                        st.warning("Could not generate linear plot.")
+                    # Create tabs for Linear Arc Plot and Contact Map
+                    plot_tab1, plot_tab2 = st.tabs(["Linear Arc Plot", "Contact Map (Heatmap)"])
+                    
+                    with plot_tab1:
+                        st.subheader("Interactive Linear Plot")
+                        if fig_linear:
+                            st.plotly_chart(fig_linear, use_container_width=True)
+                        else:
+                            st.warning("Could not generate linear plot.")
+                    
+                    with plot_tab2:
+                        st.subheader("Contact Map (Heatmap)")
+                        # Generate contact map
+                        contact_chart = generate_contact_map(
+                            st.session_state.plot_data_circos,
+                            show_intra_links=show_intra_links,
+                            min_sequence_distance=min_sequence_distance
+                        )
+                        if contact_chart:
+                            st.altair_chart(contact_chart, use_container_width=True)
+                        else:
+                            st.info("No data available for contact map. Try adjusting filters or enabling intra-links.")
                 
                 # Consolidated Download Section
                 if st.session_state.plot_data_circos:
