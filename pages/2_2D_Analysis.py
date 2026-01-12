@@ -328,115 +328,251 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
 # ===================================================================
 
 def generate_linear_plot_altair(plot_data, show_intra_links=True):
-    """Generate interactive linear plot using Altair with focus mode."""
+    """Generate multi-track genome browser style linear plot using Altair."""
     if plot_data is None or plot_data['links_df'].empty:
         return None
     
     links_df = plot_data['links_df'].copy()
-    
-    # Filter based on show_intra_links setting
-    if show_intra_links:
-        # Show intra-links (same protein, different positions)
-        df_filtered = links_df[
-            (links_df['P1_clean'] == links_df['P2_clean']) & 
-            (links_df['LinkPos1'] != links_df['LinkPos2'])
-        ].copy()
-    else:
-        # Show inter-links (different proteins) - DO NOT filter them out
-        df_filtered = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
-    
-    if df_filtered.empty:
-        return None
+    sector_df = plot_data.get('sector_df', pd.DataFrame())
+    annotations_bed = plot_data.get('annotations_bed', pd.DataFrame())
     
     # Determine score column
-    if 'NumPSMs' in df_filtered.columns:
+    if 'NumPSMs' in links_df.columns:
         score_col = 'NumPSMs'
-    elif 'Score' in df_filtered.columns:
+    elif 'Score' in links_df.columns:
         score_col = 'Score'
     else:
         score_col = None
-        df_filtered['Score'] = 1.0
+        links_df['Score'] = 1.0
     
-    # Prepare data for plotting
-    df_subset = df_filtered.copy()
+    # ===================================================================
+    # 1. DATA PREPARATION: Y-Axis Mapping
+    # ===================================================================
     
-    # Map column names for consistency
-    # Use LinkPos1/LinkPos2 as primary, fallback to other column names if needed
-    if 'LinkPos1' in df_subset.columns:
-        df_subset['Start1'] = df_subset['LinkPos1'].astype(float)
-    elif 'Start1' not in df_subset.columns:
-        df_subset['Start1'] = 0.0
+    # Get all unique proteins from links
+    unique_proteins = set()
+    if 'P1_clean' in links_df.columns:
+        unique_proteins.update(links_df['P1_clean'].dropna().unique())
+        unique_proteins.update(links_df['P2_clean'].dropna().unique())
     
-    if 'LinkPos2' in df_subset.columns:
-        df_subset['Start2'] = df_subset['LinkPos2'].astype(float)
-    elif 'Start2' not in df_subset.columns:
-        df_subset['Start2'] = 0.0
+    if not unique_proteins:
+        return None
+    
+    # Get protein lengths from sector_df or calculate from links
+    protein_lengths = {}
+    if not sector_df.empty and 'name' in sector_df.columns and 'end' in sector_df.columns:
+        for _, row in sector_df.iterrows():
+            if row['name'] in unique_proteins:
+                protein_lengths[row['name']] = row['end']
+    
+    # If lengths not in sector_df, calculate from max position in links
+    for protein in unique_proteins:
+        if protein not in protein_lengths:
+            protein_links = links_df[
+                (links_df['P1_clean'] == protein) | (links_df['P2_clean'] == protein)
+            ]
+            if not protein_links.empty:
+                max_pos = max(
+                    protein_links['LinkPos1'].max() if 'LinkPos1' in protein_links.columns else 0,
+                    protein_links['LinkPos2'].max() if 'LinkPos2' in protein_links.columns else 0
+                )
+                protein_lengths[protein] = max_pos if max_pos > 0 else 1000  # Default fallback
+    
+    # Create track_data with y_index assignment (sorted by length, descending)
+    track_list = []
+    for protein in sorted(unique_proteins, key=lambda x: protein_lengths.get(x, 0), reverse=True):
+        track_list.append({
+            'Protein': protein,
+            'Length': protein_lengths.get(protein, 1000),
+            'y_index': len(track_list)
+        })
+    
+    track_data = pd.DataFrame(track_list)
+    
+    if track_data.empty:
+        return None
+    
+    # Create protein to y_index mapping
+    protein_to_y = dict(zip(track_data['Protein'], track_data['y_index']))
+    
+    # Map y-indices to links dataframe
+    links_plot = links_df.copy()
+    links_plot['y1'] = links_plot['P1_clean'].map(protein_to_y)
+    links_plot['y2'] = links_plot['P2_clean'].map(protein_to_y)
+    
+    # Filter out links with missing y mappings
+    links_plot = links_plot.dropna(subset=['y1', 'y2']).copy()
+    
+    if links_plot.empty:
+        return None
     
     # Create Link_ID for selection
-    df_subset['Link_ID'] = df_subset.index.astype(str)
+    links_plot['Link_ID'] = links_plot.index.astype(str)
     
-    # Check for inter-links and create protein pair identifier
-    has_inter_links = (df_subset['P1_clean'] != df_subset['P2_clean']).any() if 'P1_clean' in df_subset.columns else False
+    # Separate intra-links and inter-links
+    intra_links = links_plot[
+        (links_plot['P1_clean'] == links_plot['P2_clean']) & 
+        (links_plot['LinkPos1'] != links_plot['LinkPos2'])
+    ].copy() if show_intra_links else pd.DataFrame()
     
-    if has_inter_links and 'P1_clean' in df_subset.columns and 'P2_clean' in df_subset.columns:
-        # Create protein pair identifier for inter-links
-        df_subset['Protein_Pair'] = df_subset['P1_clean'] + ' - ' + df_subset['P2_clean']
-        # For intra-links, use single protein name
-        intra_mask = df_subset['P1_clean'] == df_subset['P2_clean']
-        df_subset.loc[intra_mask, 'Protein_Pair'] = df_subset.loc[intra_mask, 'P1_clean']
+    inter_links = links_plot[links_plot['P1_clean'] != links_plot['P2_clean']].copy()
     
-    # Create selection for focus mode
-    selection = alt.selection_point(fields=['Link_ID'], on='mouseover', nearest=True)
+    # ===================================================================
+    # 2. LAYER 1: Protein Tracks (Backbone)
+    # ===================================================================
     
-    # Build tooltip list
-    tooltip_list = []
-    if 'P1_clean' in df_subset.columns:
-        tooltip_list.append(alt.Tooltip('P1_clean:N', title='Protein 1'))
-    tooltip_list.append(alt.Tooltip('Start1:Q', title='Residue 1'))
-    if 'P2_clean' in df_subset.columns:
-        tooltip_list.append(alt.Tooltip('P2_clean:N', title='Protein 2'))
-    tooltip_list.append(alt.Tooltip('Start2:Q', title='Residue 2'))
-    if score_col:
-        tooltip_list.append(alt.Tooltip(f'{score_col}:Q', title='Score', format='.2f'))
+    # Calculate max length for x-axis domain
+    max_length = track_data['Length'].max() if not track_data.empty else 1000
     
-    # Create base chart
-    base = alt.Chart(df_subset).encode(
-        x=alt.X('Start1:Q', title='Residue Position', scale=alt.Scale(nice=True)),
-        x2=alt.X2('Start2:Q'),
-        color=alt.Color(
-            f'{score_col}:Q' if score_col else alt.value('#1f77b4'),
-            title='Score' if score_col else None,
-            scale=alt.Scale(scheme='blues', nice=True) if score_col else None,
-            legend=alt.Legend(format='.2f') if score_col else None
-        ),
-        opacity=alt.condition(selection, alt.value(1.0), alt.value(0.05)),
-        tooltip=tooltip_list
+    # Calculate label offset for x-axis domain
+    label_offset = max_length * 0.02
+    
+    tracks = alt.Chart(track_data).mark_rect(
+        color='black',
+        height=2
+    ).encode(
+        x=alt.X('x:Q', title='Residue Position', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
+        x2=alt.X2('Length:Q'),
+        y=alt.Y('y_index:Q', title='', axis=alt.Axis(
+            tickCount=len(track_data),
+            format='.0f',
+            labelAngle=0,
+            labels=False  # Hide numeric labels, we'll use text layer instead
+        ), scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
+        tooltip=[
+            alt.Tooltip('Protein:N', title='Protein'),
+            alt.Tooltip('Length:Q', title='Length')
+        ]
+    ).transform_calculate(
+        x='0'
     )
     
-    # Use mark_rule for linear connections (mark_arc is for polar coordinates)
-    # For arc-like appearance, we use mark_rule which draws lines between points
-    chart = base.mark_rule(
-        strokeWidth=2
-    ).add_params(
-        selection
+    # Add protein name labels on the left
+    # Create a small offset for labels
+    label_offset = max_length * 0.02
+    protein_labels = alt.Chart(track_data).mark_text(
+        align='right',
+        dx=-5,
+        fontSize=11,
+        fontWeight='bold'
+    ).encode(
+        x=alt.X('label_x:Q', title='Residue Position', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
+        y=alt.Y('y_index:Q', scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
+        text=alt.Text('Protein:N')
+    ).transform_calculate(
+        label_x=f'-{label_offset}'  # Position labels to the left of origin
     )
     
-    # If inter-links are present, facet by protein pair for better visualization
-    if has_inter_links and 'Protein_Pair' in df_subset.columns:
-        # Count unique protein pairs
-        unique_pairs = df_subset['Protein_Pair'].nunique()
-        if unique_pairs > 1:
-            # Facet by protein pair (row-wise) to separate inter-links visually
-            chart = chart.facet(
-                row=alt.Row('Protein_Pair:N', title='Protein Pair', header=alt.Header(labelAngle=0, labelAlign='left'))
-            ).resolve_scale(
-                x='independent'  # Allow independent x-scales per facet
+    # ===================================================================
+    # 3. LAYER 2: Annotations (Colored Blocks)
+    # ===================================================================
+    
+    annotations_chart = None
+    if not annotations_bed.empty and 'chr' in annotations_bed.columns:
+        # Map annotations to y_index
+        annots_plot = annotations_bed.copy()
+        annots_plot['y_index'] = annots_plot['chr'].map(protein_to_y)
+        annots_plot = annots_plot.dropna(subset=['y_index']).copy()
+        
+        if not annots_plot.empty:
+            annotations_chart = alt.Chart(annots_plot).mark_rect(
+                opacity=0.5
+            ).encode(
+                x=alt.X('start:Q', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
+                x2=alt.X2('end:Q'),
+                y=alt.Y('y_index:Q', scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
+                color=alt.Color('name:N', title='Annotation', legend=alt.Legend(limit=10)),
+                tooltip=[
+                    alt.Tooltip('chr:N', title='Protein'),
+                    alt.Tooltip('name:N', title='Annotation'),
+                    alt.Tooltip('start:Q', title='Start'),
+                    alt.Tooltip('end:Q', title='End')
+                ]
             )
     
-    chart = chart.properties(
+    # ===================================================================
+    # 4. LAYER 3: Intra-Links (Curved Arcs)
+    # ===================================================================
+    
+    # Create selection for focus mode (shared across all link layers)
+    selection = alt.selection_point(fields=['Link_ID'], on='mouseover', nearest=True)
+    
+    intra_links_chart = None
+    if not intra_links.empty:
+        # For intra-links, use mark_rule for simplicity (straight lines on same track)
+        # Note: True arcs would require generating curve points, but mark_rule works well
+        intra_links_chart = alt.Chart(intra_links).mark_rule(
+            strokeWidth=2
+        ).encode(
+            x=alt.X('LinkPos1:Q', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
+            x2=alt.X2('LinkPos2:Q'),
+            y=alt.Y('y1:Q', scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
+            color=alt.Color(
+                f'{score_col}:Q' if score_col else alt.value('#1f77b4'),
+                title='Score' if score_col else None,
+                scale=alt.Scale(scheme='viridis', nice=True) if score_col else None
+            ),
+            opacity=alt.condition(selection, alt.value(1.0), alt.value(0.3)),
+            tooltip=[
+                alt.Tooltip('P1_clean:N', title='Protein'),
+                alt.Tooltip('LinkPos1:Q', title='Position 1'),
+                alt.Tooltip('LinkPos2:Q', title='Position 2'),
+                alt.Tooltip(f'{score_col}:Q', title='Score', format='.2f') if score_col else None
+            ]
+        ).add_params(selection)
+    
+    # ===================================================================
+    # 5. LAYER 4: Inter-Links (Straight Lines)
+    # ===================================================================
+    
+    inter_links_chart = None
+    if not inter_links.empty:
+        inter_links_chart = alt.Chart(inter_links).mark_rule(
+            strokeWidth=1.5
+        ).encode(
+            x=alt.X('LinkPos1:Q', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
+            y=alt.Y('y1:Q', scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
+            x2=alt.X2('LinkPos2:Q'),
+            y2=alt.Y2('y2:Q'),
+            color=alt.Color(
+                f'{score_col}:Q' if score_col else alt.value('#1f77b4'),
+                title='Score' if score_col else None,
+                scale=alt.Scale(scheme='viridis', nice=True) if score_col else None
+            ),
+            opacity=alt.condition(selection, alt.value(1.0), alt.value(0.2)),
+            tooltip=[
+                alt.Tooltip('P1_clean:N', title='Protein 1'),
+                alt.Tooltip('LinkPos1:Q', title='Position 1'),
+                alt.Tooltip('P2_clean:N', title='Protein 2'),
+                alt.Tooltip('LinkPos2:Q', title='Position 2'),
+                alt.Tooltip(f'{score_col}:Q', title='Score', format='.2f') if score_col else None
+            ]
+        ).add_params(selection)
+    
+    # ===================================================================
+    # 6. COMBINE LAYERS
+    # ===================================================================
+    
+    layers = [tracks, protein_labels]  # Tracks and labels first (background)
+    
+    if annotations_chart is not None:
+        layers.append(annotations_chart)
+    
+    if intra_links_chart is not None:
+        layers.append(intra_links_chart)
+    
+    if inter_links_chart is not None:
+        layers.append(inter_links_chart)
+    
+    # Combine all layers
+    chart = alt.layer(*layers).resolve_scale(
+        x='shared',
+        y='shared',
+        color='independent'
+    ).properties(
         width=800,
-        height=300 if not has_inter_links else 200,  # Adjust height if faceted
-        title='Interactive Linear Plot'
+        height=max(400, len(track_data) * 50),  # Dynamic height based on number of tracks
+        title='Multi-Track Linear Plot'
     )
     
     return chart
