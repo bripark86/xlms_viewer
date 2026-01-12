@@ -327,97 +327,14 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
 # SECTION 3: VISUALIZATION FUNCTIONS
 # ===================================================================
 
-def calculate_arcs(df, min_sequence_distance=10):
-    """
-    Calculate arc coordinates for each link in the dataframe.
-    
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        Filtered dataframe with columns: LinkPos1, LinkPos2, and optionally Score/NumPSMs
-    min_sequence_distance : int
-        Minimum sequence distance to filter links
-    
-    Returns:
-    --------
-    pd.DataFrame with columns: ['x', 'y', 'Link_ID', 'Score', 'P1', 'P2', 'Distance']
-    """
-    if df.empty:
-        return pd.DataFrame()
-    
-    # Filter by minimum sequence distance
-    df = df.copy()
-    df['distance'] = abs(df['LinkPos1'] - df['LinkPos2'])
-    if min_sequence_distance > 0:
-        df = df[df['distance'] >= min_sequence_distance].copy()
-    
-    if df.empty:
-        return pd.DataFrame()
-    
-    # Determine score column
-    if 'NumPSMs' in df.columns:
-        score_col = 'NumPSMs'
-    elif 'Score' in df.columns:
-        score_col = 'Score'
-    else:
-        score_col = None
-        df['Score'] = 1.0
-    
-    # Generate arc points for each link
-    arc_data = []
-    n_points = 20  # Number of points per arc for smooth curves
-    
-    for idx, row in df.iterrows():
-        p1 = float(row['LinkPos1'])
-        p2 = float(row['LinkPos2'])
-        distance = float(row['distance'])
-        score = float(row[score_col]) if score_col else 1.0
-        
-        # Generate x coordinates from P1 to P2
-        x_coords = np.linspace(p1, p2, n_points)
-        
-        # Calculate y coordinates for a semi-circular arc
-        # The peak height is proportional to the distance
-        # Use a parabolic/semi-circular shape: y = height * (1 - (2x - 1)^2)
-        # where x is normalized from 0 to 1
-        x_normalized = np.linspace(0, 1, n_points)
-        
-        # Arc height is proportional to distance (scale factor to make it visible)
-        # Use a reasonable scaling: height = distance * scale_factor
-        # Adjust scale_factor to control how tall arcs appear
-        scale_factor = 0.02  # Adjust this to control arc height relative to distance
-        arc_height = distance * scale_factor
-        
-        # Calculate y using a semi-circular/parabolic function
-        # y = height * sqrt(1 - (2x - 1)^2) for semi-circle, or simpler parabola
-        # Using parabola: y = 4 * height * x * (1 - x)
-        y_coords = 4 * arc_height * x_normalized * (1 - x_normalized)
-        
-        # Create Link_ID for grouping
-        link_id = f"Link_{idx}_{int(p1)}_{int(p2)}"
-        
-        # Add points to arc_data
-        for x, y in zip(x_coords, y_coords):
-            arc_data.append({
-                'x': x,
-                'y': y,
-                'Link_ID': link_id,
-                'Score': score,
-                'P1': int(p1),
-                'P2': int(p2),
-                'Distance': int(distance)
-            })
-    
-    return pd.DataFrame(arc_data)
-
-def generate_arc_diagram(plot_data, show_intra_links=True, min_sequence_distance=10):
-    """Generate Arc Diagram visualization using Altair."""
+def generate_linear_plot_altair(plot_data, show_intra_links=True):
+    """Generate interactive linear plot using Altair with focus mode."""
     if plot_data is None or plot_data['links_df'].empty:
         return None
     
     links_df = plot_data['links_df'].copy()
     
-    # Filter for intra-links if needed
+    # Filter for intra-links or inter-links based on setting
     if show_intra_links:
         filtered_df = links_df[
             (links_df['P1_clean'] == links_df['P2_clean']) & 
@@ -429,50 +346,56 @@ def generate_arc_diagram(plot_data, show_intra_links=True, min_sequence_distance
     if filtered_df.empty:
         return None
     
-    # Calculate arcs
-    arc_data = calculate_arcs(filtered_df, min_sequence_distance=min_sequence_distance)
+    # Determine score column
+    if 'NumPSMs' in filtered_df.columns:
+        score_col = 'NumPSMs'
+    elif 'Score' in filtered_df.columns:
+        score_col = 'Score'
+    else:
+        score_col = None
+        filtered_df['Score'] = 1.0
     
-    if arc_data.empty:
-        return None
+    # Prepare data for plotting
+    plot_df = filtered_df.copy()
+    plot_df['P1'] = plot_df['LinkPos1'].astype(float)
+    plot_df['P2'] = plot_df['LinkPos2'].astype(float)
+    plot_df['Distance'] = abs(plot_df['P1'] - plot_df['P2'])
     
-    # Get score range for color scale
-    min_score = arc_data['Score'].min()
-    max_score = arc_data['Score'].max()
+    # Create selection for focus mode
+    selection = alt.selection_point(on='mouseover', nearest=True)
     
-    # Create Altair chart
-    chart = alt.Chart(arc_data).mark_line(
-        strokeWidth=1.5,
-        opacity=0.5
+    # Build tooltip list - always include protein names if available
+    tooltip_list = []
+    if 'P1_clean' in plot_df.columns:
+        tooltip_list.append(alt.Tooltip('P1_clean:N', title='Protein 1'))
+    tooltip_list.append(alt.Tooltip('P1:Q', title='Residue 1'))
+    if 'P2_clean' in plot_df.columns:
+        tooltip_list.append(alt.Tooltip('P2_clean:N', title='Protein 2'))
+    tooltip_list.append(alt.Tooltip('P2:Q', title='Residue 2'))
+    tooltip_list.append(alt.Tooltip('Distance:Q', title='Distance (residues)'))
+    if score_col:
+        tooltip_list.append(alt.Tooltip(f'{score_col}:Q', title='Score', format='.2f'))
+    
+    # Create Altair chart using mark_rule for linear connections
+    chart = alt.Chart(plot_df).mark_rule(
+        strokeWidth=2
     ).encode(
-        x=alt.X('x:Q', title='Residue Position', scale=alt.Scale(nice=True)),
-        y=alt.Y('y:Q', title='', axis=alt.Axis(labels=False, ticks=False, domain=False)),
-        detail='Link_ID:N',
+        x=alt.X('P1:Q', title='Residue Position', scale=alt.Scale(nice=True)),
+        x2=alt.X2('P2:Q'),
         color=alt.Color(
-            'Score:Q',
-            title='Score',
-            scale=alt.Scale(
-                domain=[min_score, max_score],
-                range=['#808080', '#1f77b4'],  # Grey to bold blue gradient
-                type='linear',
-                nice=True
-            ),
-            legend=alt.Legend(
-                title='Score',
-                format='.2f'
-            )
+            f'{score_col}:Q' if score_col else 'Distance:Q',
+            title='Score' if score_col else 'Distance',
+            scale=alt.Scale(scheme='viridis', nice=True),
+            legend=alt.Legend(format='.2f')
         ),
-        tooltip=[
-            alt.Tooltip('P1:Q', title='Start Position'),
-            alt.Tooltip('P2:Q', title='End Position'),
-            alt.Tooltip('Distance:Q', title='Distance (residues)'),
-            alt.Tooltip('Score:Q', title='Score', format='.2f')
-        ]
+        opacity=alt.condition(selection, alt.value(1.0), alt.value(0.1)),
+        tooltip=tooltip_list
+    ).add_params(
+        selection
     ).properties(
         width=800,
-        height=400,
-        title='Arc Diagram'
-    ).configure_view(
-        strokeWidth=0
+        height=300,
+        title='Interactive Linear Plot'
     )
     
     return chart
@@ -947,16 +870,6 @@ with st.sidebar:
         key="show_intra_links"
     )
     
-    min_sequence_distance = st.slider(
-        "Min. Sequence Distance (Residues)",
-        min_value=0,
-        max_value=100,
-        value=10,
-        step=1,
-        help="Filter out intra-protein links with distance less than this value to reduce clutter",
-        key="min_sequence_distance"
-    )
-    
     plot_button = st.button("Generate Plot", type="primary", use_container_width=True)
     
     st.divider()
@@ -1046,11 +959,10 @@ if plot_button or st.session_state.plot_data_circos is not None:
             st.header("Global View")
             
             if st.session_state.plot_data_circos:
-                # Generate Arc Diagram
-                arc_chart = generate_arc_diagram(
+                # Generate Linear Plot
+                linear_chart = generate_linear_plot_altair(
                     st.session_state.plot_data_circos,
-                    show_intra_links=show_intra_links,
-                    min_sequence_distance=min_sequence_distance
+                    show_intra_links=show_intra_links
                 )
                 
                 # Create side-by-side columns: Circos (left) and Linear (right)
@@ -1180,11 +1092,12 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         st.code(traceback.format_exc(), language='text')
                 
                 with col2:
-                    st.subheader("Arc Diagram")
-                    if arc_chart:
-                        st.altair_chart(arc_chart, use_container_width=True)
+                    st.subheader("Interactive Linear Plot")
+                    if linear_chart:
+                        st.altair_chart(linear_chart, use_container_width=True)
+                        st.caption("💡 Hover over links to highlight them. All other links will fade for focus.")
                     else:
-                        st.info("No data available for arc diagram. Try adjusting filters or enabling intra-links.")
+                        st.info("No data available for linear plot. Try adjusting filters or enabling intra-links.")
                 
                 # Consolidated Download Section
                 if st.session_state.plot_data_circos:
@@ -1233,9 +1146,9 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 st.info("Generate the plot first to enable download.")
                         
                         with d_col2:
-                            st.markdown("#### Arc Diagram")
-                            if arc_chart:
-                                st.info("Arc Diagram downloads are available through the Altair chart interface (right-click on the chart).")
+                            st.markdown("#### Linear Plot")
+                            if linear_chart:
+                                st.info("Linear Plot downloads are available through the Altair chart interface (right-click on the chart).")
                             else:
                                 st.info("Generate the plot first to enable download.")
             else:
