@@ -1526,19 +1526,6 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                     st.info("PDF generation available on demand.")
                             else:
                                 st.info("Generate the plot first to enable download.")
-                
-                # ===================================================================
-                # BOTTOM ROW: Annotation Details (Expander)
-                # ===================================================================
-                with st.expander("📘 Annotation Details", expanded=False):
-                    if st.session_state.plot_data_circos and not st.session_state.plot_data_circos['annotations_df'].empty:
-                        annot_display = st.session_state.plot_data_circos['annotations_df'][
-                            ['clean_name', 'AnnotName', 'StartRes', 'EndRes']
-                        ].copy()
-                        annot_display.columns = ['Protein', 'Annotation Name', 'Start', 'End']
-                        st.dataframe(annot_display, width='stretch', hide_index=True)
-                    else:
-                        st.info("No annotations available.")
             else:
                 st.info("Click 'Generate Plot' to create visualizations.")
         
