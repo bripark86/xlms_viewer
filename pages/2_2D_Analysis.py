@@ -7,6 +7,7 @@ import plotly.express as px
 import os
 import re
 import subprocess
+import shutil
 from io import StringIO
 
 # Page configuration
@@ -1160,45 +1161,47 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             if not os.path.exists(r_script_path):
                                 st.error(f"R script not found at {r_script_path}. Please ensure the script exists.")
                             else:
-                                # Debug: Check if Rscript exists
-                                import shutil
-                                r_path = shutil.which("Rscript")
-                                st.write(f"DEBUG: Rscript path found at: {r_path}")
+                                # Dynamically find Rscript path
+                                rscript_path = shutil.which("Rscript")
                                 
-                                # Run R script
-                                cmd = [
-                                    "Rscript",
-                                    r_script_path,
-                                    links_file,
-                                    sectors_file,
-                                    annots_file,
-                                    output_file
-                                ]
-                                
-                                with st.spinner("Generating Circos plot..."):
-                                    try:
-                                        result = subprocess.run(
-                                            cmd,
-                                            capture_output=True,
-                                            text=True,
-                                            timeout=60  # 60 second timeout
-                                        )
-                                    except FileNotFoundError:
-                                        st.error("R is not installed on this server. Please check packages.txt.")
-                                        result = None
-                                
-                                if result is not None and result.returncode == 0:
-                                    # Check if output file was created
-                                    if os.path.exists(output_file):
-                                        st.image(output_file, use_container_width=True)
-                                    else:
-                                        st.error(f"R script completed but output file not found at {output_file}")
+                                if rscript_path is None:
+                                    st.error("Rscript not found in Conda environment. Please ensure R is installed via environment.yml.")
+                                else:
+                                    # Run R script using dynamically found path
+                                    cmd = [
+                                        rscript_path,
+                                        r_script_path,
+                                        links_file,
+                                        sectors_file,
+                                        annots_file,
+                                        output_file
+                                    ]
+                                    
+                                    with st.spinner("Generating Circos plot..."):
+                                        try:
+                                            result = subprocess.run(
+                                                cmd,
+                                                capture_output=True,
+                                                text=True,
+                                                timeout=60  # 60 second timeout
+                                            )
+                                        except FileNotFoundError:
+                                            st.error("Rscript not found in Conda environment. Please ensure R is installed via environment.yml.")
+                                            result = None
+                                    
+                                    # Check result only if subprocess was executed
+                                    if result is not None and result.returncode == 0:
+                                        # Check if output file was created
+                                        if os.path.exists(output_file):
+                                            st.image(output_file, use_container_width=True)
+                                        else:
+                                            st.error(f"R script completed but output file not found at {output_file}")
+                                            if result.stderr:
+                                                st.code(result.stderr, language='text')
+                                    elif result is not None:
+                                        st.error("Error generating Circos plot.")
                                         if result.stderr:
                                             st.code(result.stderr, language='text')
-                                elif result is not None:
-                                    st.error("Error generating Circos plot.")
-                                    if result.stderr:
-                                        st.code(result.stderr, language='text')
                     
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
