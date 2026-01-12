@@ -8,7 +8,6 @@ dependencies:
   - r-dplyr
   - r-readr
   - r-rcolorbrewer
-  - r-essentials
   - pip
   - pip:
     - streamlit>=1.28.0
