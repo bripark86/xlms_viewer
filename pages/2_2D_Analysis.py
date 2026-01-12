@@ -1413,7 +1413,7 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         import streamlit.components.v1 as components
                         with open(linear_plot_file, 'r', encoding='utf-8') as f:
                             html_content = f.read()
-                        components.html(html_content, height=800, scrolling=True)
+                        components.html(html_content, height=600, scrolling=True)
                         st.caption("💡 Hover over elements to see tooltips. Multi-track genome browser view showing protein tracks, annotations, and crosslinks.")
                     else:
                         st.info("No data available for linear plot. Try adjusting filters or enabling intra-links.")
