@@ -98,6 +98,18 @@ def download_pdb(pdb_id, filename):
         st.error(f"Error downloading PDB file: {str(e)}")
         return False
 
+@st.cache_data
+def _load_pdb_file_content(filename):
+    """Cached function to load PDB file content and parse structure."""
+    try:
+        with open(filename, 'r') as f:
+            content = f.read()
+        parser = PDBParser(QUIET=True)
+        structure = parser.get_structure('protein', StringIO(content))
+        return structure, content
+    except Exception as e:
+        return None, None
+
 def load_default_pdb():
     """Load default 6LTJ.pdb, downloading if necessary."""
     default_file = "6LTJ.pdb"
@@ -110,16 +122,11 @@ def load_default_pdb():
             else:
                 return None, None
     
-    # Load the file
-    try:
-        with open(default_file, 'r') as f:
-            content = f.read()
-        parser = PDBParser(QUIET=True)
-        structure = parser.get_structure('protein', StringIO(content))
-        return structure, content
-    except Exception as e:
-        st.error(f"Error loading default PDB file: {str(e)}")
-        return None, None
+    # Load the file using cached function
+    structure, content = _load_pdb_file_content(default_file)
+    if structure is None or content is None:
+        st.error(f"Error loading default PDB file")
+    return structure, content
 
 def parse_pdb_file(uploaded_file):
     """Parse PDB file and return structure object and raw content."""
@@ -331,6 +338,15 @@ def parse_csv_file(uploaded_file):
         st.error(f"Error parsing CSV file: {str(e)}")
         return None
 
+@st.cache_data
+def _load_protein_lengths():
+    """Cached function to load protein lengths CSV."""
+    try:
+        return pd.read_csv("data/protein_lengths.csv")
+    except Exception:
+        return None
+
+@st.cache_data
 def load_dataset_3d(dataset_key):
     """Load dataset from data/ folder for 3D analysis."""
     if dataset_key not in FILE_INFO_LIST:
@@ -354,22 +370,23 @@ def load_dataset_3d(dataset_key):
             df = pd.read_csv(links_path)
             
             # Map short names using protein_lengths if available
-            try:
-                protein_lengths = pd.read_csv("data/protein_lengths.csv")
-                name_to_rawid = protein_lengths[['short_name', 'raw_id']].drop_duplicates()
-                
-                df = df.merge(
-                    name_to_rawid, left_on='Protein1', right_on='short_name', how='left'
-                ).rename(columns={'raw_id': 'Protein1_raw'}).merge(
-                    name_to_rawid, left_on='Protein2', right_on='short_name', how='left'
-                ).rename(columns={'raw_id': 'Protein2_raw'})
-                
-                df = df.dropna(subset=['Protein1_raw', 'Protein2_raw'])
-                df = df.drop(columns=['Protein1', 'Protein2'])
-                df = df.rename(columns={'Protein1_raw': 'Protein1', 'Protein2_raw': 'Protein2'})
-            except Exception:
-                # If protein_lengths.csv doesn't exist, use as-is
-                pass
+            protein_lengths = _load_protein_lengths()
+            if protein_lengths is not None:
+                try:
+                    name_to_rawid = protein_lengths[['short_name', 'raw_id']].drop_duplicates()
+                    
+                    df = df.merge(
+                        name_to_rawid, left_on='Protein1', right_on='short_name', how='left'
+                    ).rename(columns={'raw_id': 'Protein1_raw'}).merge(
+                        name_to_rawid, left_on='Protein2', right_on='short_name', how='left'
+                    ).rename(columns={'raw_id': 'Protein2_raw'})
+                    
+                    df = df.dropna(subset=['Protein1_raw', 'Protein2_raw'])
+                    df = df.drop(columns=['Protein1', 'Protein2'])
+                    df = df.rename(columns={'Protein1_raw': 'Protein1', 'Protein2_raw': 'Protein2'})
+                except Exception:
+                    # If mapping fails, use as-is
+                    pass
         
         else:
             return None
@@ -382,7 +399,6 @@ def load_dataset_3d(dataset_key):
         return df
     
     except Exception as e:
-        st.error(f"Error loading dataset {dataset_key}: {str(e)}")
         return None
 
 def auto_apply_baf_master_map(df):
