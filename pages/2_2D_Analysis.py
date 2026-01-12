@@ -327,6 +327,116 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
 # SECTION 3: VISUALIZATION FUNCTIONS
 # ===================================================================
 
+def generate_linear_plot_R(plot_data, show_intra_links=True, output_format='png'):
+    """Generate linear plot using R/ggplot2 script."""
+    if plot_data is None or plot_data['links_df'].empty:
+        return None
+    
+    import tempfile
+    import subprocess
+    import shutil
+    import sys
+    
+    links_df = plot_data['links_df'].copy()
+    sector_df = plot_data.get('sector_df', pd.DataFrame())
+    annotations_bed = plot_data.get('annotations_bed', pd.DataFrame())
+    
+    if sector_df.empty or 'name' not in sector_df.columns:
+        return None
+    
+    # Prepare temporary files
+    temp_dir = "temp"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    links_file = os.path.join(temp_dir, "temp_linear_links.csv")
+    lengths_file = os.path.join(temp_dir, "temp_linear_lengths.csv")
+    annots_file = os.path.join(temp_dir, "temp_linear_annots.csv")
+    
+    # Determine output file extension
+    if output_format.lower() == 'pdf':
+        output_file = os.path.join(temp_dir, "linear_plot.pdf")
+    else:
+        output_file = os.path.join(temp_dir, "linear_plot.png")
+    
+    # Prepare links dataframe for export
+    links_export = links_df[['P1_clean', 'LinkPos1', 'P2_clean', 'LinkPos2']].copy()
+    if 'NumPSMs' in links_df.columns:
+        links_export['NumPSMs'] = links_df['NumPSMs']
+    elif 'Score' in links_df.columns:
+        links_export['Score'] = links_df['Score']
+    
+    # Prepare sector dataframe (protein lengths)
+    sector_export = sector_df[['name', 'start', 'end']].copy()
+    
+    # Prepare annotations dataframe
+    if not annotations_bed.empty and 'chr' in annotations_bed.columns:
+        annots_export = annotations_bed[['chr', 'start', 'end', 'name']].copy()
+    else:
+        # Create empty annotations file
+        annots_export = pd.DataFrame(columns=['chr', 'start', 'end', 'name'])
+    
+    # Save to CSV files
+    try:
+        links_export.to_csv(links_file, index=False)
+        sector_export.to_csv(lengths_file, index=False)
+        annots_export.to_csv(annots_file, index=False)
+    except Exception as e:
+        st.error(f"Error preparing data files: {str(e)}")
+        return None
+    
+    # Find Rscript path
+    rscript_path = os.path.join(os.path.dirname(sys.executable), "Rscript")
+    if not os.path.exists(rscript_path):
+        rscript_path = shutil.which("Rscript")
+    
+    if rscript_path is None or not os.path.exists(rscript_path):
+        st.error("Rscript not found in Conda environment. Please ensure R is installed via environment.yml.")
+        return None
+    
+    # Call R script
+    r_script_path = "r_scripts/linear_plot.R"
+    if not os.path.exists(r_script_path):
+        st.error(f"R script not found at {r_script_path}. Please ensure the script exists.")
+        return None
+    
+    cmd = [
+        rscript_path,
+        r_script_path,
+        links_file,
+        lengths_file,
+        annots_file,
+        output_file,
+        "TRUE" if show_intra_links else "FALSE"  # Convert boolean to R boolean string
+    ]
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            if os.path.exists(output_file):
+                return output_file
+            else:
+                st.error(f"R script completed but output file not found at {output_file}")
+                if result.stderr:
+                    st.code(result.stderr, language='text')
+                return None
+        else:
+            st.error("Error generating linear plot.")
+            if result.stderr:
+                st.code(result.stderr, language='text')
+            return None
+    except FileNotFoundError:
+        st.error("Rscript not found in Conda environment. Please ensure R is installed via environment.yml.")
+        return None
+    except Exception as e:
+        st.error(f"Error running R script: {str(e)}")
+        return None
+
 def generate_linear_plot_altair(plot_data, show_intra_links=True):
     """Generate multi-track genome browser style linear plot using Altair."""
     if plot_data is None or plot_data['links_df'].empty:
@@ -1140,10 +1250,11 @@ if plot_button or st.session_state.plot_data_circos is not None:
             st.header("Global View")
             
             if st.session_state.plot_data_circos:
-                # Generate Linear Plot
-                linear_chart = generate_linear_plot_altair(
+                # Generate Linear Plot using R
+                linear_plot_file = generate_linear_plot_R(
                     st.session_state.plot_data_circos,
-                    show_intra_links=show_intra_links
+                    show_intra_links=show_intra_links,
+                    output_format='png'
                 )
                 
                 # Create side-by-side columns: Circos (left) and Linear (right)
@@ -1273,10 +1384,10 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         st.code(traceback.format_exc(), language='text')
                 
                 with col2:
-                    st.subheader("Interactive Linear Plot")
-                    if linear_chart:
-                        st.altair_chart(linear_chart, use_container_width=True)
-                        st.caption("💡 Hover over links to highlight them. All other links will fade for focus.")
+                    st.subheader("Linear Plot")
+                    if linear_plot_file and os.path.exists(linear_plot_file):
+                        st.image(linear_plot_file, use_container_width=True)
+                        st.caption("💡 Multi-track genome browser view showing protein tracks, annotations, and crosslinks.")
                     else:
                         st.info("No data available for linear plot. Try adjusting filters or enabling intra-links.")
                 
@@ -1328,8 +1439,43 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         
                         with d_col2:
                             st.markdown("#### Linear Plot")
-                            if linear_chart:
-                                st.info("Linear Plot downloads are available through the Altair chart interface (right-click on the chart).")
+                            # Check if Linear plot exists
+                            linear_plot_png = os.path.join("temp", "linear_plot.png")
+                            linear_plot_pdf = os.path.join("temp", "linear_plot.pdf")
+                            
+                            if os.path.exists(linear_plot_png):
+                                with open(linear_plot_png, 'rb') as f:
+                                    linear_img_bytes = f.read()
+                                
+                                # PNG download
+                                st.download_button(
+                                    label="📥 Download as PNG",
+                                    data=linear_img_bytes,
+                                    file_name=f"linear_plot_{selected_dataset_key}.png",
+                                    mime="image/png"
+                                )
+                                
+                                # PDF download - generate if needed
+                                if not os.path.exists(linear_plot_pdf):
+                                    # Generate PDF version
+                                    with st.spinner("Generating PDF..."):
+                                        pdf_file = generate_linear_plot_R(
+                                            st.session_state.plot_data_circos,
+                                            show_intra_links=show_intra_links,
+                                            output_format='pdf'
+                                        )
+                                
+                                if os.path.exists(linear_plot_pdf):
+                                    with open(linear_plot_pdf, 'rb') as f:
+                                        linear_pdf_bytes = f.read()
+                                    st.download_button(
+                                        label="📥 Download as PDF",
+                                        data=linear_pdf_bytes,
+                                        file_name=f"linear_plot_{selected_dataset_key}.pdf",
+                                        mime="application/pdf"
+                                    )
+                                else:
+                                    st.info("PDF generation available on demand.")
                             else:
                                 st.info("Generate the plot first to enable download.")
             else:
