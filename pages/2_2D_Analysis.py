@@ -1280,9 +1280,6 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             output_format='png'
                         )
                 
-                # Create side-by-side columns: Circos (left) and Linear (right)
-                col1, col2 = st.columns([1, 1])
-                
                 # Prepare file paths (defined at higher scope for download section)
                 temp_dir = "temp"
                 os.makedirs(temp_dir, exist_ok=True)
@@ -1291,7 +1288,12 @@ if plot_button or st.session_state.plot_data_circos is not None:
                 annots_file = os.path.join(temp_dir, "temp_annots.csv")
                 output_file = os.path.join(temp_dir, "circos_plot.png")
                 
-                with col1:
+                # ===================================================================
+                # TOP ROW: Circos Plot (Left) | Crosslink Details Table (Right)
+                # ===================================================================
+                top_col1, top_col2 = st.columns([1, 1])
+                
+                with top_col1:
                     st.subheader("Circos Plot")
                     # Generate Circos plot
                     plot_data = st.session_state.plot_data_circos
@@ -1406,17 +1408,36 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         import traceback
                         st.code(traceback.format_exc(), language='text')
                 
-                with col2:
-                    st.subheader("Interactive Linear Plot")
-                    if linear_plot_file and os.path.exists(linear_plot_file):
-                        # Display interactive HTML widget
-                        import streamlit.components.v1 as components
-                        with open(linear_plot_file, 'r', encoding='utf-8') as f:
-                            html_content = f.read()
-                        components.html(html_content, height=600, scrolling=True)
-                        st.caption("💡 Hover over elements to see tooltips. Multi-track genome browser view showing protein tracks, annotations, and crosslinks.")
+                with top_col2:
+                    st.subheader("Crosslink Details")
+                    if st.session_state.plot_data_circos and not st.session_state.plot_data_circos['links_df'].empty:
+                        display_df = st.session_state.plot_data_circos['links_df'][
+                            ['P1_clean', 'LinkPos1', 'P2_clean', 'LinkPos2']
+                        ].copy()
+                        display_df.columns = ['Protein 1', 'Position 1', 'Protein 2', 'Position 2']
+                        
+                        if 'NumPSMs' in st.session_state.plot_data_circos['links_df'].columns:
+                            display_df['PSMs'] = st.session_state.plot_data_circos['links_df']['NumPSMs']
+                        elif 'Score' in st.session_state.plot_data_circos['links_df'].columns:
+                            display_df['Score'] = st.session_state.plot_data_circos['links_df']['Score']
+                        
+                        st.dataframe(display_df, width='stretch', hide_index=True)
                     else:
-                        st.info("No data available for linear plot. Try adjusting filters or enabling intra-links.")
+                        st.info("No crosslinks to display.")
+                
+                # ===================================================================
+                # MIDDLE ROW: Interactive Linear Plot (Full Width)
+                # ===================================================================
+                st.subheader("Interactive Linear Plot")
+                if linear_plot_file and os.path.exists(linear_plot_file):
+                    # Display interactive HTML widget
+                    import streamlit.components.v1 as components
+                    with open(linear_plot_file, 'r', encoding='utf-8') as f:
+                        html_content = f.read()
+                    components.html(html_content, height=600, scrolling=True)
+                    st.caption("💡 Hover over elements to see tooltips. Multi-track genome browser view showing protein tracks, annotations, and crosslinks.")
+                else:
+                    st.info("No data available for linear plot. Try adjusting filters or enabling intra-links.")
                 
                 # Consolidated Download Section
                 if st.session_state.plot_data_circos:
@@ -1505,38 +1526,21 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                     st.info("PDF generation available on demand.")
                             else:
                                 st.info("Generate the plot first to enable download.")
+                
+                # ===================================================================
+                # BOTTOM ROW: Annotation Details (Expander)
+                # ===================================================================
+                with st.expander("📘 Annotation Details", expanded=False):
+                    if st.session_state.plot_data_circos and not st.session_state.plot_data_circos['annotations_df'].empty:
+                        annot_display = st.session_state.plot_data_circos['annotations_df'][
+                            ['clean_name', 'AnnotName', 'StartRes', 'EndRes']
+                        ].copy()
+                        annot_display.columns = ['Protein', 'Annotation Name', 'Start', 'End']
+                        st.dataframe(annot_display, width='stretch', hide_index=True)
+                    else:
+                        st.info("No annotations available.")
             else:
                 st.info("Click 'Generate Plot' to create visualizations.")
-            
-            st.divider()
-            
-            st.subheader("Crosslink Details")
-            if st.session_state.plot_data_circos and not st.session_state.plot_data_circos['links_df'].empty:
-                display_df = st.session_state.plot_data_circos['links_df'][
-                    ['P1_clean', 'LinkPos1', 'P2_clean', 'LinkPos2']
-                ].copy()
-                display_df.columns = ['Protein 1', 'Position 1', 'Protein 2', 'Position 2']
-                
-                if 'NumPSMs' in st.session_state.plot_data_circos['links_df'].columns:
-                    display_df['PSMs'] = st.session_state.plot_data_circos['links_df']['NumPSMs']
-                elif 'Score' in st.session_state.plot_data_circos['links_df'].columns:
-                    display_df['Score'] = st.session_state.plot_data_circos['links_df']['Score']
-                
-                st.dataframe(display_df, width='stretch', hide_index=True)
-            else:
-                st.info("No crosslinks to display.")
-            
-            st.divider()
-            
-            st.subheader("Annotation Details")
-            if st.session_state.plot_data_circos and not st.session_state.plot_data_circos['annotations_df'].empty:
-                annot_display = st.session_state.plot_data_circos['annotations_df'][
-                    ['clean_name', 'AnnotName', 'StartRes', 'EndRes']
-                ].copy()
-                annot_display.columns = ['Protein', 'Annotation Name', 'Start', 'End']
-                st.dataframe(annot_display, width='stretch', hide_index=True)
-            else:
-                st.info("No annotations available.")
         
         with tab2:
             st.header("Lollipop View")
