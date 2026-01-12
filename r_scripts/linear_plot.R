@@ -2,6 +2,8 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(dplyr)
   library(readr)
+  library(ggiraph)
+  library(htmlwidgets)
 })
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -113,64 +115,126 @@ if (length(missing_proteins) > 0) {
   color_palette <- fixed_palette
 }
 
-# Build the plot
-p <- ggplot() +
-  # Protein tracks (black rectangles)
-  geom_rect(data = plot_df,
+# Determine if output is HTML (interactive) or static (PNG/PDF)
+is_html_output <- grepl("\\.html$", output_file, ignore.case = TRUE)
+
+# Build the plot - use interactive geoms for HTML, static for PNG/PDF
+if (is_html_output) {
+  # Interactive version with tooltips
+  p <- ggplot() +
+    # Protein tracks (black rectangles) - interactive
+    geom_rect_interactive(data = plot_df,
+             aes(xmin = start, xmax = end, 
+                 ymin = as.numeric(name) - 0.2, ymax = as.numeric(name) + 0.2,
+                 tooltip = as.character(name), data_id = as.character(name)),
+             fill = "black") +
+    
+    # Annotations (colored blocks on top of tracks) - interactive
+    {
+      if (!is.null(annot_df) && nrow(annot_df) > 0) {
+        geom_rect_interactive(data = annot_df,
+                  aes(xmin = start, xmax = end,
+                      ymin = as.numeric(chr) - 0.2, ymax = as.numeric(chr) + 0.2,
+                      fill = chr,
+                      tooltip = paste0(as.character(chr), ": ", start, " - ", end, " (", name, ")"),
+                      data_id = paste(as.character(chr), start, end)),
+                  alpha = 0.6)
+      } else {
+        NULL
+      }
+    } +
+    
+    # Inter-links (straight lines between different proteins) - interactive
+    {
+      if (nrow(inter_links) > 0) {
+        geom_segment_interactive(data = inter_links,
+                     aes(x = LinkPos1, xend = LinkPos2,
+                         y = as.numeric(P1_clean) + 0.2, yend = as.numeric(P2_clean) + 0.2,
+                         color = P1_clean,
+                         alpha = AlphaValue,
+                         tooltip = paste0(as.character(P1_clean), "(", LinkPos1, ") - ", as.character(P2_clean), "(", LinkPos2, ")"),
+                         data_id = paste0(as.character(P1_clean), LinkPos1, as.character(P2_clean), LinkPos2)),
+                     linewidth = 0.8)
+      } else {
+        NULL
+      }
+    } +
+    
+    # Intra-links (curved arcs for same protein, if enabled) - interactive
+    {
+      if (show_intra_links && nrow(intra_links) > 0) {
+        geom_curve_interactive(data = intra_links,
+                   aes(x = LinkPos1, xend = LinkPos2,
+                       y = as.numeric(P1_clean) + 0.2, yend = as.numeric(P1_clean) + 0.2,
+                       color = P1_clean,
+                       alpha = AlphaValue,
+                       tooltip = paste0(as.character(P1_clean), " (", LinkPos1, " - ", LinkPos2, ")"),
+                       data_id = paste0(as.character(P1_clean), LinkPos1, as.character(P1_clean), LinkPos2)),
+                   curvature = -0.4,
+                   linewidth = 0.8)
+      } else {
+        NULL
+      }
+    }
+} else {
+  # Static version (PNG/PDF)
+  p <- ggplot() +
+    # Protein tracks (black rectangles)
+    geom_rect(data = plot_df,
              aes(xmin = start, xmax = end, 
                  ymin = as.numeric(name) - 0.2, ymax = as.numeric(name) + 0.2),
              fill = "black") +
-  
-  # Annotations (colored blocks on top of tracks)
-  {
-    if (!is.null(annot_df) && nrow(annot_df) > 0) {
-      geom_rect(data = annot_df,
+    
+    # Annotations (colored blocks on top of tracks)
+    {
+      if (!is.null(annot_df) && nrow(annot_df) > 0) {
+        geom_rect(data = annot_df,
                 aes(xmin = start, xmax = end,
                     ymin = as.numeric(chr) - 0.2, ymax = as.numeric(chr) + 0.2,
                     fill = chr),
                 alpha = 0.6)
-    } else {
-      NULL
-    }
-  } +
-  
-  # Inter-links (straight lines between different proteins)
-  {
-    if (nrow(inter_links) > 0) {
-      geom_segment(data = inter_links,
+      } else {
+        NULL
+      }
+    } +
+    
+    # Inter-links (straight lines between different proteins)
+    {
+      if (nrow(inter_links) > 0) {
+        geom_segment(data = inter_links,
                    aes(x = LinkPos1, xend = LinkPos2,
                        y = as.numeric(P1_clean) + 0.2, yend = as.numeric(P2_clean) + 0.2,
                        color = P1_clean,
                        alpha = AlphaValue),
                    linewidth = 0.8)
-    } else {
-      NULL
-    }
-  } +
-  
-  # Intra-links (curved arcs for same protein, if enabled)
-  {
-    if (show_intra_links && nrow(intra_links) > 0) {
-      geom_curve(data = intra_links,
+      } else {
+        NULL
+      }
+    } +
+    
+    # Intra-links (curved arcs for same protein, if enabled)
+    {
+      if (show_intra_links && nrow(intra_links) > 0) {
+        geom_curve(data = intra_links,
                  aes(x = LinkPos1, xend = LinkPos2,
                      y = as.numeric(P1_clean) + 0.2, yend = as.numeric(P1_clean) + 0.2,
                      color = P1_clean,
                      alpha = AlphaValue),
                  curvature = -0.4,
                  linewidth = 0.8)
-    } else {
-      NULL
+      } else {
+        NULL
+      }
     }
-  } +
-  
-  # Scales
+}
+
+# Add scales and theme (common for both versions)
+p <- p +
   scale_fill_manual(values = color_palette) +
   scale_color_manual(values = color_palette) +
   scale_alpha_continuous(name = "Score/PSMs", range = c(0.25, 1.0)) +
   scale_y_continuous(breaks = 1:length(protein_order), labels = protein_order, expand = c(0.1, 0.1)) +
   scale_x_continuous(name = "Amino Acid Position", limits = c(0, max_len), expand = c(0, 0)) +
-  
-  # Theme
   theme_minimal() +
   theme(
     panel.background = element_rect(fill = "white", color = NA),
@@ -186,7 +250,19 @@ p <- ggplot() +
   )
 
 # Save the plot
-ggsave(output_file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
-
-print(paste("Linear plot saved to:", output_file))
+if (is_html_output) {
+  # Create interactive widget
+  widget <- girafe(ggobj = p, width_svg = 12, height_svg = 8,
+                   options = list(
+                     opts_tooltip(css = "background-color:wheat;color:black;padding:5px;border-radius:5px;"),
+                     opts_hover(css = "stroke:black;stroke-width:3px;")
+                   ))
+  # Save as HTML widget
+  saveWidget(widget, file = output_file, selfcontained = TRUE)
+  print(paste("Interactive linear plot saved to:", output_file))
+} else {
+  # Save as static image
+  ggsave(output_file, plot = p, width = 12, height = 8, dpi = 300, bg = "white")
+  print(paste("Linear plot saved to:", output_file))
+}
 

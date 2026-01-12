@@ -355,6 +355,8 @@ def generate_linear_plot_R(plot_data, show_intra_links=True, output_format='png'
     # Determine output file extension
     if output_format.lower() == 'pdf':
         output_file = os.path.join(temp_dir, "linear_plot.pdf")
+    elif output_format.lower() == 'html':
+        output_file = os.path.join(temp_dir, "linear_plot.html")
     else:
         output_file = os.path.join(temp_dir, "linear_plot.png")
     
@@ -1250,12 +1252,20 @@ if plot_button or st.session_state.plot_data_circos is not None:
             st.header("Global View")
             
             if st.session_state.plot_data_circos:
-                # Generate Linear Plot using R
-                linear_plot_file = generate_linear_plot_R(
-                    st.session_state.plot_data_circos,
-                    show_intra_links=show_intra_links,
-                    output_format='png'
-                )
+                # Generate Linear Plot using R (HTML for interactive display)
+                with st.spinner("Generating interactive linear plot..."):
+                    linear_plot_file = generate_linear_plot_R(
+                        st.session_state.plot_data_circos,
+                        show_intra_links=show_intra_links,
+                        output_format='html'
+                    )
+                    # Also generate PNG for downloads
+                    if linear_plot_file:
+                        generate_linear_plot_R(
+                            st.session_state.plot_data_circos,
+                            show_intra_links=show_intra_links,
+                            output_format='png'
+                        )
                 
                 # Create side-by-side columns: Circos (left) and Linear (right)
                 col1, col2 = st.columns([1, 1])
@@ -1384,10 +1394,14 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         st.code(traceback.format_exc(), language='text')
                 
                 with col2:
-                    st.subheader("Linear Plot")
+                    st.subheader("Interactive Linear Plot")
                     if linear_plot_file and os.path.exists(linear_plot_file):
-                        st.image(linear_plot_file, use_container_width=True)
-                        st.caption("💡 Multi-track genome browser view showing protein tracks, annotations, and crosslinks.")
+                        # Display interactive HTML widget
+                        import streamlit.components.v1 as components
+                        with open(linear_plot_file, 'r', encoding='utf-8') as f:
+                            html_content = f.read()
+                        components.html(html_content, height=800, scrolling=True)
+                        st.caption("💡 Hover over elements to see tooltips. Multi-track genome browser view showing protein tracks, annotations, and crosslinks.")
                     else:
                         st.info("No data available for linear plot. Try adjusting filters or enabling intra-links.")
                 

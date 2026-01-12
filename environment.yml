@@ -9,6 +9,8 @@ dependencies:
   - r-readr
   - r-rcolorbrewer
   - r-ggplot2
+  - r-ggiraph
+  - r-htmlwidgets
   - pip
   - pip:
     - streamlit>=1.28.0
