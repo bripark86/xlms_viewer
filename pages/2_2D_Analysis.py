@@ -334,67 +334,108 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
     
     links_df = plot_data['links_df'].copy()
     
-    # Filter for intra-links or inter-links based on setting
+    # Filter based on show_intra_links setting
     if show_intra_links:
-        filtered_df = links_df[
+        # Show intra-links (same protein, different positions)
+        df_filtered = links_df[
             (links_df['P1_clean'] == links_df['P2_clean']) & 
             (links_df['LinkPos1'] != links_df['LinkPos2'])
         ].copy()
     else:
-        filtered_df = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
+        # Show inter-links (different proteins) - DO NOT filter them out
+        df_filtered = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
     
-    if filtered_df.empty:
+    if df_filtered.empty:
         return None
     
     # Determine score column
-    if 'NumPSMs' in filtered_df.columns:
+    if 'NumPSMs' in df_filtered.columns:
         score_col = 'NumPSMs'
-    elif 'Score' in filtered_df.columns:
+    elif 'Score' in df_filtered.columns:
         score_col = 'Score'
     else:
         score_col = None
-        filtered_df['Score'] = 1.0
+        df_filtered['Score'] = 1.0
     
     # Prepare data for plotting
-    plot_df = filtered_df.copy()
-    plot_df['P1'] = plot_df['LinkPos1'].astype(float)
-    plot_df['P2'] = plot_df['LinkPos2'].astype(float)
-    plot_df['Distance'] = abs(plot_df['P1'] - plot_df['P2'])
+    df_subset = df_filtered.copy()
+    
+    # Map column names for consistency
+    # Use LinkPos1/LinkPos2 as primary, fallback to other column names if needed
+    if 'LinkPos1' in df_subset.columns:
+        df_subset['Start1'] = df_subset['LinkPos1'].astype(float)
+    elif 'Start1' not in df_subset.columns:
+        df_subset['Start1'] = 0.0
+    
+    if 'LinkPos2' in df_subset.columns:
+        df_subset['Start2'] = df_subset['LinkPos2'].astype(float)
+    elif 'Start2' not in df_subset.columns:
+        df_subset['Start2'] = 0.0
+    
+    # Create Link_ID for selection
+    df_subset['Link_ID'] = df_subset.index.astype(str)
+    
+    # Check for inter-links and create protein pair identifier
+    has_inter_links = (df_subset['P1_clean'] != df_subset['P2_clean']).any() if 'P1_clean' in df_subset.columns else False
+    
+    if has_inter_links and 'P1_clean' in df_subset.columns and 'P2_clean' in df_subset.columns:
+        # Create protein pair identifier for inter-links
+        df_subset['Protein_Pair'] = df_subset['P1_clean'] + ' - ' + df_subset['P2_clean']
+        # For intra-links, use single protein name
+        intra_mask = df_subset['P1_clean'] == df_subset['P2_clean']
+        df_subset.loc[intra_mask, 'Protein_Pair'] = df_subset.loc[intra_mask, 'P1_clean']
     
     # Create selection for focus mode
-    selection = alt.selection_point(on='mouseover', nearest=True)
+    selection = alt.selection_point(fields=['Link_ID'], on='mouseover', nearest=True)
     
-    # Build tooltip list - always include protein names if available
+    # Build tooltip list
     tooltip_list = []
-    if 'P1_clean' in plot_df.columns:
+    if 'P1_clean' in df_subset.columns:
         tooltip_list.append(alt.Tooltip('P1_clean:N', title='Protein 1'))
-    tooltip_list.append(alt.Tooltip('P1:Q', title='Residue 1'))
-    if 'P2_clean' in plot_df.columns:
+    tooltip_list.append(alt.Tooltip('Start1:Q', title='Residue 1'))
+    if 'P2_clean' in df_subset.columns:
         tooltip_list.append(alt.Tooltip('P2_clean:N', title='Protein 2'))
-    tooltip_list.append(alt.Tooltip('P2:Q', title='Residue 2'))
-    tooltip_list.append(alt.Tooltip('Distance:Q', title='Distance (residues)'))
+    tooltip_list.append(alt.Tooltip('Start2:Q', title='Residue 2'))
     if score_col:
         tooltip_list.append(alt.Tooltip(f'{score_col}:Q', title='Score', format='.2f'))
     
-    # Create Altair chart using mark_rule for linear connections
-    chart = alt.Chart(plot_df).mark_rule(
-        strokeWidth=2
-    ).encode(
-        x=alt.X('P1:Q', title='Residue Position', scale=alt.Scale(nice=True)),
-        x2=alt.X2('P2:Q'),
+    # Create base chart
+    base = alt.Chart(df_subset).encode(
+        x=alt.X('Start1:Q', title='Residue Position', scale=alt.Scale(nice=True)),
+        x2=alt.X2('Start2:Q'),
         color=alt.Color(
-            f'{score_col}:Q' if score_col else 'Distance:Q',
-            title='Score' if score_col else 'Distance',
-            scale=alt.Scale(scheme='viridis', nice=True),
-            legend=alt.Legend(format='.2f')
+            f'{score_col}:Q' if score_col else alt.value('#1f77b4'),
+            title='Score' if score_col else None,
+            scale=alt.Scale(scheme='blues', nice=True) if score_col else None,
+            legend=alt.Legend(format='.2f') if score_col else None
         ),
-        opacity=alt.condition(selection, alt.value(1.0), alt.value(0.1)),
+        opacity=alt.condition(selection, alt.value(1.0), alt.value(0.05)),
         tooltip=tooltip_list
+    )
+    
+    # Use mark_rule for linear connections (mark_arc is for polar coordinates)
+    # For arc-like appearance, we use mark_rule which draws lines between points
+    chart = base.mark_rule(
+        strokeWidth=2
     ).add_params(
         selection
-    ).properties(
+    )
+    
+    # If inter-links are present, facet by protein pair for better visualization
+    if has_inter_links and 'Protein_Pair' in df_subset.columns:
+        # Count unique protein pairs
+        unique_pairs = df_subset['Protein_Pair'].nunique()
+        if unique_pairs > 1:
+            # Facet by protein pair (row-wise) to separate inter-links visually
+            chart = chart.facet(
+                row=alt.Row('Protein_Pair:N', title='Protein Pair', header=alt.Header(labelAngle=0, labelAlign='left'))
+            ).resolve_scale(
+                x='independent'  # Allow independent x-scales per facet
+            )
+    
+    chart = chart.properties(
         width=800,
-        height=300,
+        height=300 if not has_inter_links else 200,  # Adjust height if faceted
         title='Interactive Linear Plot'
     )
     
