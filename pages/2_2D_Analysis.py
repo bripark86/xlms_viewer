@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import shutil
+import sys
 from io import StringIO
 
 # Page configuration
@@ -913,6 +914,99 @@ loaded_sequences = load_fasta_sequences()
 # Title
 st.title("📊 2D Data Explorer")
 st.markdown("Visualize cross-linking mass spectrometry data in 2D views")
+
+# Debug Environment Expander
+with st.expander("🔍 Debug Environment", expanded=False):
+    st.markdown("### Environment Information")
+    
+    # 1. Print sys.executable
+    st.markdown("**1. Python Executable:**")
+    st.code(sys.executable, language='text')
+    
+    # 2. Check for Rscript in common conda paths
+    st.markdown("**2. Searching for Rscript in Conda Environment:**")
+    conda_paths = [
+        os.path.expanduser("~/.conda"),
+        os.path.expanduser("~/miniconda3"),
+        os.path.expanduser("~/anaconda3"),
+        "/opt/conda",
+        "/home/adminuser/.conda",
+        os.environ.get("CONDA_PREFIX", ""),
+        os.path.dirname(sys.executable) if sys.executable else ""
+    ]
+    
+    rscript_found = False
+    for conda_path in conda_paths:
+        if conda_path and os.path.exists(conda_path):
+            try:
+                # Try using find command
+                result = subprocess.run(
+                    f"find {conda_path} -name Rscript -type f 2>/dev/null",
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    st.success(f"✅ Found Rscript in: {conda_path}")
+                    st.code(result.stdout.strip(), language='text')
+                    rscript_found = True
+                else:
+                    # Try alternative method using os.walk
+                    try:
+                        for root, dirs, files in os.walk(conda_path):
+                            if 'Rscript' in files:
+                                full_path = os.path.join(root, 'Rscript')
+                                st.success(f"✅ Found Rscript at: {full_path}")
+                                st.code(full_path, language='text')
+                                rscript_found = True
+                                break
+                            # Also check in bin subdirectories
+                            if 'bin' in dirs:
+                                bin_path = os.path.join(root, 'bin', 'Rscript')
+                                if os.path.exists(bin_path):
+                                    st.success(f"✅ Found Rscript at: {bin_path}")
+                                    st.code(bin_path, language='text')
+                                    rscript_found = True
+                                    break
+                    except Exception as walk_error:
+                        pass
+            except Exception as e:
+                st.warning(f"Could not search {conda_path}: {str(e)}")
+    
+    if not rscript_found:
+        st.error("❌ Rscript not found in any Conda paths")
+    
+    # 3. Print PATH environment variable
+    st.markdown("**3. PATH Environment Variable:**")
+    path_value = os.environ.get('PATH', 'NOT SET')
+    st.code(path_value, language='text')
+    
+    # 4. Run conda list
+    st.markdown("**4. Installed Conda Packages (conda list):**")
+    try:
+        conda_list_result = subprocess.run(
+            ["conda", "list"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if conda_list_result.returncode == 0:
+            st.code(conda_list_result.stdout, language='text')
+        else:
+            st.error(f"conda list failed: {conda_list_result.stderr}")
+    except FileNotFoundError:
+        st.warning("conda command not found in PATH")
+    except Exception as e:
+        st.error(f"Error running conda list: {str(e)}")
+    
+    # Additional: Check shutil.which result
+    st.markdown("**5. shutil.which('Rscript') Result:**")
+    rscript_path = shutil.which("Rscript")
+    if rscript_path:
+        st.success(f"✅ Found: {rscript_path}")
+    else:
+        st.error("❌ Not found in PATH")
 
 # Sidebar
 with st.sidebar:
