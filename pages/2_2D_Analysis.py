@@ -1457,6 +1457,68 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                     except Exception:
                                         st.info("PDF download requires kaleido. Install with: pip install kaleido")
                             
+                            # Domain Annotations & Details
+                            with st.expander("📘 Domain Annotations & Details", expanded=False):
+                                if not target_annotations.empty:
+                                    # Prepare annotation display dataframe
+                                    annot_display = target_annotations.copy()
+                                    
+                                    # Select and rename columns for display
+                                    display_cols = {}
+                                    if 'AnnotName' in annot_display.columns:
+                                        display_cols['AnnotName'] = 'Domain'
+                                    if 'StartRes' in annot_display.columns:
+                                        display_cols['StartRes'] = 'Start'
+                                    if 'EndRes' in annot_display.columns:
+                                        display_cols['EndRes'] = 'End'
+                                    # Check for color column (case-insensitive)
+                                    color_col = None
+                                    for col in annot_display.columns:
+                                        if col.lower() in ['color', 'colour', 'hex', 'hexcolor']:
+                                            color_col = col
+                                            display_cols[col] = 'Color'
+                                            break
+                                    
+                                    # Create display dataframe with selected columns
+                                    annot_display_filtered = annot_display[list(display_cols.keys())].copy()
+                                    annot_display_filtered = annot_display_filtered.rename(columns=display_cols)
+                                    
+                                    # Configure column display
+                                    column_config = {}
+                                    if 'Domain' in annot_display_filtered.columns:
+                                        column_config['Domain'] = st.column_config.TextColumn(
+                                            "Domain",
+                                            help="Domain or annotation name"
+                                        )
+                                    if 'Start' in annot_display_filtered.columns:
+                                        column_config['Start'] = st.column_config.NumberColumn(
+                                            "Start",
+                                            format="%d",
+                                            help="Start residue position"
+                                        )
+                                    if 'End' in annot_display_filtered.columns:
+                                        column_config['End'] = st.column_config.NumberColumn(
+                                            "End",
+                                            format="%d",
+                                            help="End residue position"
+                                        )
+                                    if 'Color' in annot_display_filtered.columns:
+                                        # Try to display as text column (colored pills require more complex handling)
+                                        column_config['Color'] = st.column_config.TextColumn(
+                                            "Color",
+                                            help="Hex color code for the domain"
+                                        )
+                                    
+                                    # Display the dataframe
+                                    st.dataframe(
+                                        annot_display_filtered,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config=column_config
+                                    )
+                                else:
+                                    st.info("No specific domain annotations found for this protein.")
+                            
                             st.divider()
                             
                             # Sequence viewer
