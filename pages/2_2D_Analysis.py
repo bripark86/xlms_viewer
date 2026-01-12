@@ -327,321 +327,153 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
 # SECTION 3: VISUALIZATION FUNCTIONS
 # ===================================================================
 
-def generate_linear_plot(plot_data, show_intra_links=True, min_sequence_distance=10):
-    """Generate publication-quality interactive linear plot using Plotly."""
-    if plot_data is None or plot_data['sector_df'].empty:
-        return None
+def calculate_arcs(df, min_sequence_distance=10):
+    """
+    Calculate arc coordinates for each link in the dataframe.
     
-    sector_df = plot_data['sector_df'].copy()
-    links_df = plot_data['links_df'].copy()
-    annotations_bed = plot_data['annotations_bed'].copy()
-    color_palette = plot_data['color_palette']
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Filtered dataframe with columns: LinkPos1, LinkPos2, and optionally Score/NumPSMs
+    min_sequence_distance : int
+        Minimum sequence distance to filter links
     
-    # Sort proteins by length (descending)
-    sector_df = sector_df.sort_values('end', ascending=False)
-    protein_order = sector_df['name'].tolist()
+    Returns:
+    --------
+    pd.DataFrame with columns: ['x', 'y', 'Link_ID', 'Score', 'P1', 'P2', 'Distance']
+    """
+    if df.empty:
+        return pd.DataFrame()
     
-    # Create figure with white template
-    fig = go.Figure()
+    # Filter by minimum sequence distance
+    df = df.copy()
+    df['distance'] = abs(df['LinkPos1'] - df['LinkPos2'])
+    if min_sequence_distance > 0:
+        df = df[df['distance'] >= min_sequence_distance].copy()
     
-    max_len = sector_df['end'].max()
+    if df.empty:
+        return pd.DataFrame()
     
-    # Create numeric y positions with increased spacing
-    y_positions = {name: idx * 2 for idx, name in enumerate(protein_order)}  # Increased spacing (2x)
-    
-    # Add protein tracks as thin rectangles using shapes
-    for idx, (_, row) in enumerate(sector_df.iterrows()):
-        protein_name = row['name']
-        color = color_palette.get(protein_name, '#808080')
-        y_pos = y_positions[protein_name]
-        
-        # Use shapes for thinner, more precise rectangles
-        fig.add_shape(
-            type="rect",
-            x0=row['start'],
-            x1=row['end'],
-            y0=y_pos - 0.2,  # Thinner track
-            y1=y_pos + 0.2,
-            fillcolor=color,
-            line=dict(color='black', width=1.5),
-            layer='below'
-        )
-        
-        # Add protein name label
-        fig.add_annotation(
-            x=max_len * 0.01,
-            y=y_pos,
-            text=f"<b>{protein_name}</b>",
-            showarrow=False,
-            font=dict(size=11, color='black'),
-            xanchor='left',
-            bgcolor='white',
-            bordercolor='black',
-            borderwidth=1
-        )
-    
-    # Add annotations (domain blocks) as overlays
-    if not annotations_bed.empty:
-        for _, row in annotations_bed.iterrows():
-            protein_name = row['chr']
-            if protein_name in y_positions:
-                y_pos = y_positions[protein_name]
-                color = color_palette.get(protein_name, '#808080')
-                fig.add_shape(
-                    type="rect",
-                    x0=row['start'],
-                    x1=row['end'],
-                    y0=y_pos - 0.2,
-                    y1=y_pos + 0.2,
-                    fillcolor=color,
-                    opacity=0.6,
-                    line=dict(color='#666666', width=1),
-                    layer='below'
-                )
-    
-    # Process links
-    if 'NumPSMs' in links_df.columns:
-        links_df['AlphaValue'] = links_df['NumPSMs']
+    # Determine score column
+    if 'NumPSMs' in df.columns:
         score_col = 'NumPSMs'
-    elif 'Score' in links_df.columns:
-        links_df['AlphaValue'] = links_df['Score']
+    elif 'Score' in df.columns:
         score_col = 'Score'
     else:
-        links_df['AlphaValue'] = 1.0
         score_col = None
+        df['Score'] = 1.0
     
-    # Normalize alpha values for better visibility (range: 0.3 to 1.0)
-    if links_df['AlphaValue'].max() > links_df['AlphaValue'].min():
-        min_val = links_df['AlphaValue'].min()
-        max_val = links_df['AlphaValue'].max()
-        links_df['AlphaValue'] = 0.3 + 0.7 * ((links_df['AlphaValue'] - min_val) / (max_val - min_val))
-    else:
-        links_df['AlphaValue'] = 0.7
+    # Generate arc points for each link
+    arc_data = []
+    n_points = 20  # Number of points per arc for smooth curves
     
-    # Separate inter and intra links
-    inter_links = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
-    intra_links = links_df[
-        (links_df['P1_clean'] == links_df['P2_clean']) & 
-        (links_df['LinkPos1'] != links_df['LinkPos2'])
-    ].copy()
-    
-    # Calculate link distances for intra-links and filter by minimum sequence distance
-    if not intra_links.empty:
-        intra_links['link_distance'] = abs(intra_links['LinkPos1'] - intra_links['LinkPos2'])
-        # Strict filtering: only keep links where distance >= min_sequence_distance
-        if min_sequence_distance > 0:
-            intra_links = intra_links[intra_links['link_distance'] >= min_sequence_distance].copy()
-    
-    # Add inter-links (thin, transparent straight lines)
-    for _, link in inter_links.iterrows():
-        p1 = link['P1_clean']
-        p2 = link['P2_clean']
+    for idx, row in df.iterrows():
+        p1 = float(row['LinkPos1'])
+        p2 = float(row['LinkPos2'])
+        distance = float(row['distance'])
+        score = float(row[score_col]) if score_col else 1.0
         
-        if p1 in y_positions and p2 in y_positions:
-            color = color_palette.get(p1, '#808080')
-            # Force opacity to 0.3 for inter-links
-            alpha = 0.3
-            score_text = f" | Score: {link[score_col]:.2f}" if score_col else ""
-            
-            fig.add_trace(go.Scatter(
-                x=[link['LinkPos1'], link['LinkPos2']],
-                y=[y_positions[p1] + 0.2, y_positions[p2] + 0.2],
-                mode='lines',
-                line=dict(color=color, width=1),  # Thinner lines
-                opacity=alpha,
-                showlegend=False,
-                hovertemplate=f"<b>{p1}</b> (Pos {link['LinkPos1']}) <-> <b>{p2}</b> (Pos {link['LinkPos2']}){score_text}<extra></extra>"
-            ))
-    
-    # Add intra-links (Bézier curves) if enabled
-    if show_intra_links and not intra_links.empty:
-        # Calculate max distance for normalization (before iterating)
-        max_distance = intra_links['link_distance'].max() if not intra_links.empty else 1
+        # Generate x coordinates from P1 to P2
+        x_coords = np.linspace(p1, p2, n_points)
         
-        for _, link in intra_links.iterrows():
-            p1 = link['P1_clean']
-            
-            if p1 in y_positions:
-                y_pos = y_positions[p1]
-                color = color_palette.get(p1, '#808080')
-                alpha = link['AlphaValue']
-                
-                # Get score and distance for tooltip
-                pos1 = int(link['LinkPos1'])
-                pos2 = int(link['LinkPos2'])
-                distance = int(link.get('link_distance', abs(pos1 - pos2)))
-                score_val = link[score_col] if score_col else None
-                score_text = f"<br>Score: {score_val:.2f}" if score_val is not None else ""
-                
-                # Create Bézier curve for smooth arc (loops downward)
-                x_start = link['LinkPos1']
-                x_end = link['LinkPos2']
-                
-                # Control points for cubic Bézier curve
-                control_offset = abs(x_end - x_start) * 0.4  # Horizontal offset for control points
-                # Map arc height to distance: longer links = taller arcs, shorter links = lower arcs
-                # Normalize distance to a reasonable arc height range (0.05 to 0.3)
-                if max_distance > 0:
-                    # Scale arc height based on distance relative to max distance
-                    arc_height = 0.05 + (distance / max_distance) * 0.25  # Range: 0.05 to 0.3
-                else:
-                    arc_height = 0.1  # Default fallback
-                
-                # Generate Bézier curve points
-                n_points = 50
-                t = np.linspace(0, 1, n_points)
-                
-                # Cubic Bézier: P(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃
-                x_curve = ((1-t)**3 * x_start + 
-                          3*(1-t)**2*t * (x_start + control_offset) + 
-                          3*(1-t)*t**2 * (x_end - control_offset) + 
-                          t**3 * x_end)
-                
-                # Y curve loops downward (below the track)
-                y_curve = ((1-t)**3 * (y_pos - 0.2) + 
-                          3*(1-t)**2*t * (y_pos - 0.2 - arc_height) + 
-                          3*(1-t)*t**2 * (y_pos - 0.2 - arc_height) + 
-                          t**3 * (y_pos - 0.2))
-                
-                # Enhanced tooltip with distance
-                hovertemplate = (
-                    f"<b>{p1}</b><br>"
-                    f"Position 1: {pos1}<br>"
-                    f"Position 2: {pos2}<br>"
-                    f"Distance: {distance} residues{score_text}"
-                    "<extra></extra>"
-                )
-                
-                fig.add_trace(go.Scatter(
-                    x=x_curve,
-                    y=y_curve,
-                    mode='lines',
-                    line=dict(color=color, width=2, smoothing=1.3),
-                    opacity=alpha,
-                    showlegend=False,
-                    hovertemplate=hovertemplate,
-                    customdata=[[pos1, pos2, distance, score_val if score_val is not None else 'N/A']]
-                ))
+        # Calculate y coordinates for a semi-circular arc
+        # The peak height is proportional to the distance
+        # Use a parabolic/semi-circular shape: y = height * (1 - (2x - 1)^2)
+        # where x is normalized from 0 to 1
+        x_normalized = np.linspace(0, 1, n_points)
+        
+        # Arc height is proportional to distance (scale factor to make it visible)
+        # Use a reasonable scaling: height = distance * scale_factor
+        # Adjust scale_factor to control how tall arcs appear
+        scale_factor = 0.02  # Adjust this to control arc height relative to distance
+        arc_height = distance * scale_factor
+        
+        # Calculate y using a semi-circular/parabolic function
+        # y = height * sqrt(1 - (2x - 1)^2) for semi-circle, or simpler parabola
+        # Using parabola: y = 4 * height * x * (1 - x)
+        y_coords = 4 * arc_height * x_normalized * (1 - x_normalized)
+        
+        # Create Link_ID for grouping
+        link_id = f"Link_{idx}_{int(p1)}_{int(p2)}"
+        
+        # Add points to arc_data
+        for x, y in zip(x_coords, y_coords):
+            arc_data.append({
+                'x': x,
+                'y': y,
+                'Link_ID': link_id,
+                'Score': score,
+                'P1': int(p1),
+                'P2': int(p2),
+                'Distance': int(distance)
+            })
     
-    # Update layout for publication quality
-    fig.update_layout(
-        template="plotly_white",
-        height=500,
-        xaxis=dict(
-            title=dict(text="<b>Amino Acid Position</b>", font=dict(size=14)),
-            range=[-max_len * 0.02, max_len * 1.02],
-            showgrid=False,
-            showline=True,
-            linecolor="black",
-            linewidth=2,
-            mirror=True,
-            tickfont=dict(size=12)
-        ),
-        yaxis=dict(
-            title="",
-            tickmode='array',
-            tickvals=list(y_positions.values()),
-            ticktext=[f"<b>{p}</b>" for p in protein_order],
-            showgrid=False,
-            showline=False,
-            showticklabels=False,  # Hide default labels since we use annotations
-            tickfont=dict(size=12, color='black'),
-            automargin=True
-        ),
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        margin=dict(l=30, r=20, t=50, b=50),
-        hovermode='closest'
-    )
-    
-    return fig
+    return pd.DataFrame(arc_data)
 
-def generate_contact_map(plot_data, show_intra_links=True, min_sequence_distance=10):
-    """Generate interactive contact map heatmap using Altair."""
+def generate_arc_diagram(plot_data, show_intra_links=True, min_sequence_distance=10):
+    """Generate Arc Diagram visualization using Altair."""
     if plot_data is None or plot_data['links_df'].empty:
         return None
     
     links_df = plot_data['links_df'].copy()
     
-    # Determine score column
-    if 'NumPSMs' in links_df.columns:
-        score_col = 'NumPSMs'
-    elif 'Score' in links_df.columns:
-        score_col = 'Score'
-    else:
-        score_col = None
-    
     # Filter for intra-links if needed
     if show_intra_links:
-        contact_df = links_df[
+        filtered_df = links_df[
             (links_df['P1_clean'] == links_df['P2_clean']) & 
             (links_df['LinkPos1'] != links_df['LinkPos2'])
         ].copy()
     else:
-        contact_df = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
+        filtered_df = links_df[links_df['P1_clean'] != links_df['P2_clean']].copy()
     
-    if contact_df.empty:
+    if filtered_df.empty:
         return None
     
-    # Calculate distance and filter by minimum sequence distance
-    contact_df['distance'] = abs(contact_df['LinkPos1'] - contact_df['LinkPos2'])
-    if min_sequence_distance > 0:
-        contact_df = contact_df[contact_df['distance'] >= min_sequence_distance].copy()
+    # Calculate arcs
+    arc_data = calculate_arcs(filtered_df, min_sequence_distance=min_sequence_distance)
     
-    if contact_df.empty:
+    if arc_data.empty:
         return None
     
-    # Prepare data for contact map
-    # For intra-links, use P1 and P2 positions
-    # Ensure P1 <= P2 for symmetric display (upper triangle)
-    contact_map_data = []
-    for _, row in contact_df.iterrows():
-        pos1 = int(row['LinkPos1'])
-        pos2 = int(row['LinkPos2'])
-        # Ensure P1 <= P2 for symmetric heatmap
-        p1_val = min(pos1, pos2)
-        p2_val = max(pos1, pos2)
-        
-        contact_map_data.append({
-            'P1': p1_val,
-            'P2': p2_val,
-            'Score': row[score_col] if score_col else row['distance'],
-            'Distance': int(row['distance']),
-            'Protein': row['P1_clean']
-        })
-    
-    contact_map_df = pd.DataFrame(contact_map_data)
+    # Get score range for color scale
+    min_score = arc_data['Score'].min()
+    max_score = arc_data['Score'].max()
     
     # Create Altair chart
-    base = alt.Chart(contact_map_df)
-    
-    # Build tooltip list
-    tooltip_list = [
-        alt.Tooltip('P1:Q', title='Position 1'),
-        alt.Tooltip('P2:Q', title='Position 2'),
-        alt.Tooltip('Distance:Q', title='Distance (residues)'),
-        alt.Tooltip('Protein:N', title='Protein')
-    ]
-    if score_col:
-        tooltip_list.insert(2, alt.Tooltip('Score:Q', title='Score', format='.2f'))
-    
-    chart = base.mark_rect(
-        size=8
+    chart = alt.Chart(arc_data).mark_line(
+        strokeWidth=1.5,
+        opacity=0.5
     ).encode(
-        x=alt.X('P1:Q', title='Residue Position 1', scale=alt.Scale(nice=True)),
-        y=alt.Y('P2:Q', title='Residue Position 2', scale=alt.Scale(nice=True)),
+        x=alt.X('x:Q', title='Residue Position', scale=alt.Scale(nice=True)),
+        y=alt.Y('y:Q', title='', axis=alt.Axis(labels=False, ticks=False, domain=False)),
+        detail='Link_ID:N',
         color=alt.Color(
             'Score:Q',
-            title='Score' if score_col else 'Distance',
-            scale=alt.Scale(scheme='viridis'),
-            legend=alt.Legend(title='Score' if score_col else 'Distance')
+            title='Score',
+            scale=alt.Scale(
+                domain=[min_score, max_score],
+                range=['#808080', '#1f77b4'],  # Grey to bold blue gradient
+                type='linear',
+                nice=True
+            ),
+            legend=alt.Legend(
+                title='Score',
+                format='.2f'
+            )
         ),
-        tooltip=tooltip_list
+        tooltip=[
+            alt.Tooltip('P1:Q', title='Start Position'),
+            alt.Tooltip('P2:Q', title='End Position'),
+            alt.Tooltip('Distance:Q', title='Distance (residues)'),
+            alt.Tooltip('Score:Q', title='Score', format='.2f')
+        ]
     ).properties(
-        width=600,
-        height=600,
-        title='Contact Map (Intra-protein Links)'
-    ).interactive()
+        width=800,
+        height=400,
+        title='Arc Diagram'
+    ).configure_view(
+        strokeWidth=0
+    )
     
     return chart
 
@@ -1214,8 +1046,8 @@ if plot_button or st.session_state.plot_data_circos is not None:
             st.header("Global View")
             
             if st.session_state.plot_data_circos:
-                # Generate Linear plot once (reused for display and download)
-                fig_linear = generate_linear_plot(
+                # Generate Arc Diagram
+                arc_chart = generate_arc_diagram(
                     st.session_state.plot_data_circos,
                     show_intra_links=show_intra_links,
                     min_sequence_distance=min_sequence_distance
@@ -1348,28 +1180,11 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         st.code(traceback.format_exc(), language='text')
                 
                 with col2:
-                    # Create tabs for Linear Arc Plot and Contact Map
-                    plot_tab1, plot_tab2 = st.tabs(["Linear Arc Plot", "Contact Map (Heatmap)"])
-                    
-                    with plot_tab1:
-                        st.subheader("Interactive Linear Plot")
-                        if fig_linear:
-                            st.plotly_chart(fig_linear, use_container_width=True)
-                        else:
-                            st.warning("Could not generate linear plot.")
-                    
-                    with plot_tab2:
-                        st.subheader("Contact Map (Heatmap)")
-                        # Generate contact map
-                        contact_chart = generate_contact_map(
-                            st.session_state.plot_data_circos,
-                            show_intra_links=show_intra_links,
-                            min_sequence_distance=min_sequence_distance
-                        )
-                        if contact_chart:
-                            st.altair_chart(contact_chart, use_container_width=True)
-                        else:
-                            st.info("No data available for contact map. Try adjusting filters or enabling intra-links.")
+                    st.subheader("Arc Diagram")
+                    if arc_chart:
+                        st.altair_chart(arc_chart, use_container_width=True)
+                    else:
+                        st.info("No data available for arc diagram. Try adjusting filters or enabling intra-links.")
                 
                 # Consolidated Download Section
                 if st.session_state.plot_data_circos:
@@ -1418,31 +1233,9 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 st.info("Generate the plot first to enable download.")
                         
                         with d_col2:
-                            st.markdown("#### Linear Plot")
-                            if fig_linear:
-                                # PNG download
-                                try:
-                                    img_bytes = fig_linear.to_image(format="png", width=1200, height=800, engine="kaleido")
-                                    st.download_button(
-                                        label="📥 Download as PNG",
-                                        data=img_bytes,
-                                        file_name=f"linear_plot_{selected_dataset_key}.png",
-                                        mime="image/png"
-                                    )
-                                except Exception:
-                                    st.info("PNG requires kaleido")
-                                
-                                # PDF download
-                                try:
-                                    pdf_bytes = fig_linear.to_image(format="pdf", width=1200, height=800, engine="kaleido")
-                                    st.download_button(
-                                        label="📥 Download as PDF",
-                                        data=pdf_bytes,
-                                        file_name=f"linear_plot_{selected_dataset_key}.pdf",
-                                        mime="application/pdf"
-                                    )
-                                except Exception:
-                                    st.info("PDF requires kaleido")
+                            st.markdown("#### Arc Diagram")
+                            if arc_chart:
+                                st.info("Arc Diagram downloads are available through the Altair chart interface (right-click on the chart).")
                             else:
                                 st.info("Generate the plot first to enable download.")
             else:
