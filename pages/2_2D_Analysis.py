@@ -429,9 +429,11 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
     
     tracks = alt.Chart(track_data).mark_rect(
         color='black',
-        height=2
+        height=15,
+        cornerRadius=3
     ).encode(
-        x=alt.X('x:Q', title='Residue Position', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
+        x=alt.X('x:Q', title='Amino Acid Position', scale=alt.Scale(domain=[-label_offset, max_length], nice=True),
+                axis=alt.Axis(domain=True, domainColor='black', tickColor='black', title='Amino Acid Position')),
         x2=alt.X2('Length:Q'),
         y=alt.Y('y_index:Q', title='', axis=alt.Axis(
             tickCount=len(track_data),
@@ -456,7 +458,7 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
         fontSize=11,
         fontWeight='bold'
     ).encode(
-        x=alt.X('label_x:Q', title='Residue Position', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
+        x=alt.X('label_x:Q', title='Amino Acid Position', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
         y=alt.Y('y_index:Q', scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
         text=alt.Text('Protein:N')
     ).transform_calculate(
@@ -476,12 +478,12 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
         
         if not annots_plot.empty:
             annotations_chart = alt.Chart(annots_plot).mark_rect(
-                opacity=0.5
+                opacity=0.7
             ).encode(
                 x=alt.X('start:Q', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
                 x2=alt.X2('end:Q'),
                 y=alt.Y('y_index:Q', scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
-                color=alt.Color('name:N', title='Annotation'),
+                color=alt.Color('name:N', title='Annotation', legend=None),
                 tooltip=[
                     alt.Tooltip('chr:N', title='Protein'),
                     alt.Tooltip('name:N', title='Annotation'),
@@ -573,6 +575,8 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
         width=800,
         height=max(400, len(track_data) * 50),  # Dynamic height based on number of tracks
         title='Multi-Track Linear Plot'
+    ).configure_view(
+        fill='white'
     )
     
     return chart
