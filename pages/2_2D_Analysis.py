@@ -481,7 +481,7 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
                 x=alt.X('start:Q', scale=alt.Scale(domain=[-label_offset, max_length], nice=True)),
                 x2=alt.X2('end:Q'),
                 y=alt.Y('y_index:Q', scale=alt.Scale(domain=[-0.5, len(track_data) - 0.5])),
-                color=alt.Color('name:N', title='Annotation', legend=alt.Legend(limit=10)),
+                color=alt.Color('name:N', title='Annotation'),
                 tooltip=[
                     alt.Tooltip('chr:N', title='Protein'),
                     alt.Tooltip('name:N', title='Annotation'),
