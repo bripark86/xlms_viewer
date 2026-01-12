@@ -395,6 +395,18 @@ def generate_linear_plot_R(plot_data, show_intra_links=True, output_format='png'
         st.error("Rscript not found in Conda environment. Please ensure R is installed via environment.yml.")
         return None
     
+    # Find pandoc path
+    pandoc_path = shutil.which("pandoc")
+    if pandoc_path is None:
+        # Try common locations
+        common_paths = ["/usr/bin/pandoc", "/usr/local/bin/pandoc", "/opt/conda/bin/pandoc"]
+        for path in common_paths:
+            if os.path.exists(path):
+                pandoc_path = path
+                break
+        if pandoc_path is None:
+            pandoc_path = ""  # Pass empty string, let R handle it gracefully
+    
     # Call R script
     r_script_path = "r_scripts/linear_plot.R"
     if not os.path.exists(r_script_path):
@@ -408,7 +420,8 @@ def generate_linear_plot_R(plot_data, show_intra_links=True, output_format='png'
         lengths_file,
         annots_file,
         output_file,
-        "TRUE" if show_intra_links else "FALSE"  # Convert boolean to R boolean string
+        "TRUE" if show_intra_links else "FALSE",  # Convert boolean to R boolean string
+        pandoc_path  # Pass pandoc path as 6th argument
     ]
     
     try:

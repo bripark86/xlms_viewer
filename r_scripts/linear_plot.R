@@ -14,6 +14,37 @@ lengths_file <- args[2]
 annots_file <- args[3]
 output_file <- args[4]
 show_intra_links <- as.logical(args[5])
+pandoc_path <- if (length(args) >= 6) args[6] else NULL
+
+# Set pandoc path if provided
+if (!is.null(pandoc_path) && pandoc_path != "" && file.exists(pandoc_path)) {
+  # Add pandoc directory to PATH
+  pandoc_dir <- dirname(pandoc_path)
+  current_path <- Sys.getenv("PATH")
+  Sys.setenv(PATH = paste0(pandoc_dir, ":", current_path))
+  
+  # Set RSTUDIO_PANDOC (used by rmarkdown/htmlwidgets)
+  Sys.setenv(RSTUDIO_PANDOC = pandoc_dir)
+  
+  print(paste("Using pandoc at:", pandoc_path))
+} else {
+  # Try to find pandoc in common locations
+  common_paths <- c("/usr/bin/pandoc", "/usr/local/bin/pandoc", "/opt/conda/bin/pandoc", "/home/adminuser/.conda/bin/pandoc")
+  found_pandoc <- NULL
+  for (path in common_paths) {
+    if (file.exists(path)) {
+      found_pandoc <- path
+      pandoc_dir <- dirname(path)
+      Sys.setenv(PATH = paste0(pandoc_dir, ":", Sys.getenv("PATH")))
+      Sys.setenv(RSTUDIO_PANDOC = pandoc_dir)
+      print(paste("Found pandoc at:", path))
+      break
+    }
+  }
+  if (is.null(found_pandoc)) {
+    print("Warning: pandoc path not found. HTML widget generation may fail.")
+  }
+}
 
 # Load Data
 links_df <- read_csv(links_file, show_col_types = FALSE)
