@@ -250,13 +250,13 @@ def load_fasta_sequences():
         return {}
 
 def get_name_map(protein_lengths_df):
-    """Create mapping from raw_id to display name."""
+    """Create mapping from raw_id to display name, prioritizing real_name."""
     if protein_lengths_df.empty:
         return {}
     
     if 'real_name' in protein_lengths_df.columns:
         labels = protein_lengths_df.apply(
-            lambda row: row['real_name'] if pd.notna(row['real_name']) and row['real_name'] != "" else row['short_name'],
+            lambda row: row['real_name'] if pd.notna(row['real_name']) and str(row['real_name']).strip() != "" else row['short_name'],
             axis=1
         )
     else:
@@ -1799,26 +1799,20 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             
                             st.divider()
                             
-                            # Summary table - map partner_id to real_name
-                            # Create mapping from raw_id to real_name
-                            partner_id_to_real_name = {}
-                            for _, row in protein_lengths_master.iterrows():
-                                raw_id = row['raw_id']
-                                if 'real_name' in row and pd.notna(row['real_name']) and row['real_name'] != "":
-                                    partner_id_to_real_name[raw_id] = row['real_name']
-                                elif 'short_name' in row:
-                                    partner_id_to_real_name[raw_id] = row['short_name']
+                            # Summary table - map partner_id to real_name using the same mapping logic
+                            # Use the same name_map_dict that prioritizes real_name
+                            processed_links['partner_real_name'] = processed_links['partner_id'].map(name_map_dict)
                             
-                            # Map partner_id to real_name for summary
-                            processed_links['partner_real_name'] = processed_links['partner_id'].map(partner_id_to_real_name)
-                            # For self-links, use target real_name
-                            target_real_name = partner_id_to_real_name.get(target_protein_id, target_display_name)
+                            # For self-links, use target display name
                             processed_links.loc[
                                 processed_links['partner_id'] == target_protein_id,
                                 'partner_real_name'
-                            ] = target_real_name
-                            # Fill any remaining NaN with partner_name
-                            processed_links['partner_real_name'] = processed_links['partner_real_name'].fillna(processed_links['partner_name'])
+                            ] = target_display_name
+                            
+                            # Fill any remaining NaN with partner_id (fallback)
+                            processed_links['partner_real_name'] = processed_links['partner_real_name'].fillna(
+                                processed_links['partner_id']
+                            )
                             
                             summary_df = processed_links.groupby('partner_real_name').size().reset_index(name='Number of Cross-links')
                             summary_df = summary_df.sort_values('Number of Cross-links', ascending=False)
