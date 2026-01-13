@@ -643,54 +643,28 @@ with st.sidebar:
                     st.session_state.protein_mapping = {}  # Reset mappings
                     st.success(f"Loaded: {csv_file.name} ({len(df)} links)")
     
-    # PDB file upload
-    pdb_file = st.file_uploader("Upload PDB File", type=['pdb', 'ent'], key="pdb_upload")
-    
-    # Load default PDB if no file uploaded
-    if pdb_file is None:
-        if st.session_state.pdb_structure is None or st.session_state.pdb_filename != "6LTJ.pdb":
-            with st.spinner("Loading default structure (6LTJ)..."):
-                structure, content = load_default_pdb()
-                if structure is not None and content is not None:
-                    st.session_state.pdb_structure = structure
-                    st.session_state.pdb_content = content
-                    st.session_state.pdb_filename = "6LTJ.pdb"
-                    
-                    # Extract chain mappings from PDB header
-                    chain_mapping = get_pdb_chain_mapping(content, structure)
-                    st.session_state.pdb_chain_mapping = chain_mapping
-                    
-                    st.info("📦 Using default structure: 6LTJ.pdb")
-                    if chain_mapping:
-                        st.caption(f"Found {len(chain_mapping)} molecule(s) in PDB header")
-                    
-                    # Reset mapping when new PDB is loaded
-                    st.session_state.protein_mapping = {}
-                    st.session_state.auto_mapped = {}
-                    st.session_state.csv_data_processed = None
-                    st.session_state.resolved_links_count = 0
-    else:
-        if st.session_state.pdb_filename != pdb_file.name:
-            with st.spinner("Parsing PDB file and extracting metadata..."):
-                structure, content = parse_pdb_file(pdb_file)
-                if structure is not None and content is not None:
-                    st.session_state.pdb_structure = structure
-                    st.session_state.pdb_content = content
-                    st.session_state.pdb_filename = pdb_file.name
-                    
-                    # Extract chain mappings from PDB header
-                    chain_mapping = get_pdb_chain_mapping(content, structure)
-                    st.session_state.pdb_chain_mapping = chain_mapping
-                    
-                    st.success(f"Loaded: {pdb_file.name}")
-                    if chain_mapping:
-                        st.caption(f"Found {len(chain_mapping)} molecule(s) in PDB header")
-                    
-                    # Reset mapping when new PDB is loaded
-                    st.session_state.protein_mapping = {}
-                    st.session_state.auto_mapped = {}
-                    st.session_state.csv_data_processed = None
-                    st.session_state.resolved_links_count = 0
+    # Load default 6LTJ PDB structure
+    if st.session_state.pdb_structure is None or st.session_state.pdb_filename != "6LTJ.pdb":
+        with st.spinner("Loading structure (6LTJ)..."):
+            structure, content = load_default_pdb()
+            if structure is not None and content is not None:
+                st.session_state.pdb_structure = structure
+                st.session_state.pdb_content = content
+                st.session_state.pdb_filename = "6LTJ.pdb"
+                
+                # Extract chain mappings from PDB header
+                chain_mapping = get_pdb_chain_mapping(content, structure)
+                st.session_state.pdb_chain_mapping = chain_mapping
+                
+                st.info("📦 Using structure: 6LTJ.pdb")
+                if chain_mapping:
+                    st.caption(f"Found {len(chain_mapping)} molecule(s) in PDB header")
+                
+                # Reset mapping when PDB is loaded
+                st.session_state.protein_mapping = {}
+                st.session_state.auto_mapped = {}
+                st.session_state.csv_data_processed = None
+                st.session_state.resolved_links_count = 0
     
     # Process CSV data if available (only if not already processed from dataset loading)
     if st.session_state.csv_data is not None and st.session_state.csv_data_processed is None:
