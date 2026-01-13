@@ -264,6 +264,39 @@ def get_name_map(protein_lengths_df):
     
     return dict(zip(protein_lengths_df['raw_id'], labels))
 
+def get_clean_partner_name(raw_id, name_map, protein_lengths_df=None):
+    """Get clean partner name from raw_id, prioritizing real_name from CSV with fallback."""
+    # Try exact match in name_map first
+    if raw_id in name_map:
+        mapped_name = name_map[raw_id]
+        if pd.notna(mapped_name) and str(mapped_name).strip() != "":
+            return mapped_name
+    
+    # Try direct lookup in protein_lengths_df if provided
+    if protein_lengths_df is not None and 'real_name' in protein_lengths_df.columns:
+        match = protein_lengths_df[protein_lengths_df['raw_id'] == raw_id]
+        if not match.empty:
+            real_name = match.iloc[0]['real_name']
+            if pd.notna(real_name) and str(real_name).strip() != "":
+                return real_name
+            # Try short_name as fallback
+            if 'short_name' in match.columns:
+                short_name = match.iloc[0]['short_name']
+                if pd.notna(short_name) and str(short_name).strip() != "":
+                    return short_name
+    
+    # Fallback: extract from string format (e.g., "sp|O96019|ACTL6A" -> "ACTL6A")
+    raw_id_str = str(raw_id)
+    if "|" in raw_id_str:
+        parts = raw_id_str.split("|")
+        if len(parts) >= 3:
+            return parts[-1]  # Return the last part (usually the gene name)
+        elif len(parts) == 2:
+            return parts[-1]
+    
+    # Final fallback: return as-is
+    return raw_id_str
+
 def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
     """Load dataset based on the selected key."""
     if dataset_key not in FILE_INFO_LIST:
@@ -1578,16 +1611,26 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 axis=1
                             )
                             
-                            # Get partner names
-                            processed_links['partner_name'] = processed_links['partner_id'].map(name_map_dict)
+                            # Get partner names using robust mapping
+                            # Create direct mapping from protein_lengths_master prioritizing real_name
+                            id_to_realname = {}
+                            if 'real_name' in protein_lengths_master.columns:
+                                for _, row in protein_lengths_master.iterrows():
+                                    raw_id = row['raw_id']
+                                    if pd.notna(row['real_name']) and str(row['real_name']).strip() != "":
+                                        id_to_realname[raw_id] = row['real_name']
+                                    elif 'short_name' in row and pd.notna(row['short_name']) and str(row['short_name']).strip() != "":
+                                        id_to_realname[raw_id] = row['short_name']
+                            
+                            # Apply mapping with fallback function
+                            processed_links['partner_name'] = processed_links['partner_id'].apply(
+                                lambda x: get_clean_partner_name(x, id_to_realname, protein_lengths_master)
+                            )
                             # For self-links, use target name
                             processed_links.loc[
                                 processed_links['partner_id'] == target_protein_id,
                                 'partner_name'
                             ] = target_display_name
-                            processed_links['partner_name'] = processed_links['partner_name'].fillna(
-                                processed_links['partner_id'].str.extract(r'\|([^|]+)\|', expand=False)
-                            )
                             
                             # Calculate y positions
                             height_factor = st.slider(
@@ -1799,20 +1842,27 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             
                             st.divider()
                             
-                            # Summary table - map partner_id to real_name using the same mapping logic
-                            # Use the same name_map_dict that prioritizes real_name
-                            processed_links['partner_real_name'] = processed_links['partner_id'].map(name_map_dict)
+                            # Summary table - map partner_id to real_name with robust fallback
+                            # Create direct mapping from protein_lengths_master prioritizing real_name
+                            id_to_realname = {}
+                            if 'real_name' in protein_lengths_master.columns:
+                                for _, row in protein_lengths_master.iterrows():
+                                    raw_id = row['raw_id']
+                                    if pd.notna(row['real_name']) and str(row['real_name']).strip() != "":
+                                        id_to_realname[raw_id] = row['real_name']
+                                    elif 'short_name' in row and pd.notna(row['short_name']) and str(row['short_name']).strip() != "":
+                                        id_to_realname[raw_id] = row['short_name']
+                            
+                            # Apply mapping with fallback function
+                            processed_links['partner_real_name'] = processed_links['partner_id'].apply(
+                                lambda x: get_clean_partner_name(x, id_to_realname, protein_lengths_master)
+                            )
                             
                             # For self-links, use target display name
                             processed_links.loc[
                                 processed_links['partner_id'] == target_protein_id,
                                 'partner_real_name'
                             ] = target_display_name
-                            
-                            # Fill any remaining NaN with partner_id (fallback)
-                            processed_links['partner_real_name'] = processed_links['partner_real_name'].fillna(
-                                processed_links['partner_id']
-                            )
                             
                             summary_df = processed_links.groupby('partner_real_name').size().reset_index(name='Number of Cross-links')
                             summary_df = summary_df.sort_values('Number of Cross-links', ascending=False)
