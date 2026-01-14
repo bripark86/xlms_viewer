@@ -223,7 +223,7 @@ def load_protein_lengths():
         st.error(f"Error loading protein_lengths.csv: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache for 1 hour to allow periodic refresh
 def load_protein_annotations():
     """Load protein annotations CSV."""
     try:
@@ -234,6 +234,65 @@ def load_protein_annotations():
     except Exception as e:
         st.error(f"Error loading protein_annotation.csv: {str(e)}")
         return pd.DataFrame()
+
+def normalize_annotation_ids(annotations_df, protein_lengths_df):
+    """
+    Normalize annotation ProteinID column to ensure matching works regardless of format.
+    Maps real_name to raw_id if needed, creating a MappedID column.
+    """
+    if annotations_df.empty or 'ProteinID' not in annotations_df.columns:
+        return annotations_df
+    
+    if protein_lengths_df.empty:
+        # If no protein_lengths available, just use ProteinID as-is
+        annotations_df['MappedID'] = annotations_df['ProteinID']
+        return annotations_df
+    
+    # Create mapping dictionaries
+    # Map 1: raw_id -> raw_id (for direct matches)
+    raw_id_to_raw_id = dict(zip(protein_lengths_df['raw_id'], protein_lengths_df['raw_id']))
+    
+    # Map 2: real_name -> raw_id
+    real_name_to_raw_id = {}
+    if 'real_name' in protein_lengths_df.columns:
+        for _, row in protein_lengths_df.iterrows():
+            raw_id = row['raw_id']
+            if pd.notna(row['real_name']) and str(row['real_name']).strip() != "":
+                real_name_to_raw_id[str(row['real_name']).strip()] = raw_id
+    
+    # Map 3: short_name -> raw_id (fallback)
+    short_name_to_raw_id = {}
+    if 'short_name' in protein_lengths_df.columns:
+        for _, row in protein_lengths_df.iterrows():
+            raw_id = row['raw_id']
+            if pd.notna(row['short_name']) and str(row['short_name']).strip() != "":
+                short_name_to_raw_id[str(row['short_name']).strip()] = raw_id
+    
+    # Create MappedID column
+    def map_protein_id(protein_id):
+        if pd.isna(protein_id):
+            return protein_id
+        
+        protein_id_str = str(protein_id).strip()
+        
+        # Try direct raw_id match first
+        if protein_id_str in raw_id_to_raw_id:
+            return raw_id_to_raw_id[protein_id_str]
+        
+        # Try real_name match
+        if protein_id_str in real_name_to_raw_id:
+            return real_name_to_raw_id[protein_id_str]
+        
+        # Try short_name match
+        if protein_id_str in short_name_to_raw_id:
+            return short_name_to_raw_id[protein_id_str]
+        
+        # If no match found, return original (might be a valid ID we don't know about)
+        return protein_id_str
+    
+    annotations_df['MappedID'] = annotations_df['ProteinID'].apply(map_protein_id)
+    
+    return annotations_df
 
 @st.cache_data
 def load_fasta_sequences():
@@ -1124,7 +1183,9 @@ if 'highlight_range' not in st.session_state:
 
 # Load master data
 protein_lengths_master = load_protein_lengths()
-master_annotations = load_protein_annotations()
+master_annotations_raw = load_protein_annotations()
+# Normalize annotation IDs to handle real_name vs raw_id format mismatches
+master_annotations = normalize_annotation_ids(master_annotations_raw.copy(), protein_lengths_master) if not master_annotations_raw.empty else master_annotations_raw
 loaded_sequences = load_fasta_sequences()
 
 # Title
@@ -1176,7 +1237,11 @@ with st.sidebar:
     # Get available proteins
     all_protein_ids = set(links_df_orig['Protein1'].unique()) | set(links_df_orig['Protein2'].unique())
     if not annotations_df_orig.empty:
-        all_protein_ids.update(annotations_df_orig['ProteinID'].unique())
+        # Use normalized MappedID if available, otherwise fallback to ProteinID
+        if 'MappedID' in annotations_df_orig.columns:
+            all_protein_ids.update(annotations_df_orig['MappedID'].dropna().unique())
+        else:
+            all_protein_ids.update(annotations_df_orig['ProteinID'].unique())
     
     relevant_proteins = protein_lengths_master[
         protein_lengths_master['raw_id'].isin(all_protein_ids)
@@ -1231,10 +1296,18 @@ if plot_button or st.session_state.plot_data_circos is not None:
             (links_df_orig['Protein2'].isin(selected_raw_ids))
         ].copy()
         
-        # Filter annotations
-        annotations_df = annotations_df_orig[
-            annotations_df_orig['ProteinID'].isin(selected_raw_ids)
-        ].copy() if not annotations_df_orig.empty else pd.DataFrame()
+        # Filter annotations using normalized MappedID column
+        if not annotations_df_orig.empty and 'MappedID' in annotations_df_orig.columns:
+            annotations_df = annotations_df_orig[
+                annotations_df_orig['MappedID'].isin(selected_raw_ids)
+            ].copy()
+        elif not annotations_df_orig.empty:
+            # Fallback: if MappedID not available, try ProteinID
+            annotations_df = annotations_df_orig[
+                annotations_df_orig['ProteinID'].isin(selected_raw_ids)
+            ].copy()
+        else:
+            annotations_df = pd.DataFrame()
         
         # Get protein lengths
         protein_lengths = protein_lengths_master[
@@ -1260,8 +1333,12 @@ if plot_button or st.session_state.plot_data_circos is not None:
         links_df['P2_clean'] = links_df['Protein2'].map(id_map)
         links_df = links_df.dropna(subset=['P1_clean', 'P2_clean'])
         
-        # Prepare annotations
-        annotations_df['clean_name'] = annotations_df['ProteinID'].map(id_map)
+        # Prepare annotations using MappedID (normalized) instead of ProteinID
+        if not annotations_df.empty and 'MappedID' in annotations_df.columns:
+            annotations_df['clean_name'] = annotations_df['MappedID'].map(id_map)
+        else:
+            # Fallback to ProteinID if MappedID not available
+            annotations_df['clean_name'] = annotations_df['ProteinID'].map(id_map)
         annotations_bed = annotations_df.dropna(subset=['clean_name'])[
             ['clean_name', 'StartRes', 'EndRes', 'AnnotName']
         ].copy()
@@ -1645,10 +1722,19 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             processed_links = processed_links.sort_values(['target_pos', 'partner_name'])
                             processed_links['y_position'] = processed_links.groupby('target_pos').cumcount() * -height_factor
                             
-                            # Get target annotations
-                            target_annotations = annotations_df_orig[
-                                annotations_df_orig['ProteinID'] == target_protein_id
-                            ].copy() if not annotations_df_orig.empty else pd.DataFrame()
+                            # Get target annotations with normalized ID matching
+                            if not annotations_df_orig.empty and 'MappedID' in annotations_df_orig.columns:
+                                # Filter using normalized MappedID
+                                target_annotations = annotations_df_orig[
+                                    annotations_df_orig['MappedID'] == target_protein_id
+                                ].copy()
+                            elif not annotations_df_orig.empty:
+                                # Fallback: if MappedID not available, try ProteinID
+                                target_annotations = annotations_df_orig[
+                                    annotations_df_orig['ProteinID'] == target_protein_id
+                                ].copy()
+                            else:
+                                target_annotations = pd.DataFrame()
                             
                             # Create color palette for partners
                             all_partners = sorted(processed_links['partner_name'].unique())
