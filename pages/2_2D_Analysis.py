@@ -269,6 +269,21 @@ def normalize_annotation_ids(annotations_df, protein_lengths_df):
             if pd.notna(row['short_name']) and str(row['short_name']).strip() != "":
                 short_name_to_raw_id[str(row['short_name']).strip()] = raw_id
     
+    # Map 4: accession -> raw_id (for annotation using sp|ACCESSION| vs lengths using sp|ACCESSION|GENE)
+    accession_to_raw_id = {}
+    if 'accession' in protein_lengths_df.columns:
+        for _, row in protein_lengths_df.iterrows():
+            acc = row.get('accession')
+            if pd.notna(acc) and str(acc).strip() != "":
+                accession_to_raw_id[str(acc).strip()] = row['raw_id']
+    else:
+        # Extract accession from raw_id (e.g. sp|Q96GM5|SMARCD1 -> Q96GM5)
+        for _, row in protein_lengths_df.iterrows():
+            raw_id = row['raw_id']
+            m = re.search(r'\|([^|]+)\|', str(raw_id)) if raw_id else None
+            if m:
+                accession_to_raw_id[m.group(1)] = raw_id
+    
     # Create MappedID column
     def map_protein_id(protein_id):
         if pd.isna(protein_id):
@@ -287,6 +302,13 @@ def normalize_annotation_ids(annotations_df, protein_lengths_df):
         # Try short_name match
         if protein_id_str in short_name_to_raw_id:
             return short_name_to_raw_id[protein_id_str]
+        
+        # Try accession match (annotation may use sp|Q96GM5 while lengths use sp|Q96GM5|SMARCD1)
+        if "|" in protein_id_str:
+            parts = protein_id_str.split("|")
+            acc = parts[1] if len(parts) >= 2 else None
+            if acc and acc in accession_to_raw_id:
+                return accession_to_raw_id[acc]
         
         # If no match found, return original (might be a valid ID we don't know about)
         return protein_id_str
@@ -657,6 +679,12 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
     # Calculate label offset for x-axis domain
     label_offset = max_length * 0.02
     
+    # DEBUG: Verify x-axis range includes SMARCD1 SWIB (291-390)
+    _smarcd1_track = track_data[track_data['Protein'].astype(str).str.contains('SMARCD1|SMRD1', case=False, na=False)]
+    if not _smarcd1_track.empty:
+        _smarcd1_len = _smarcd1_track['Length'].iloc[0]
+        print("[DEBUG SMARCD1] x-axis max_length:", max_length, "| SMARCD1 track Length:", _smarcd1_len, "| SWIB 291-390 in range:", 390 <= max_length)
+    
     tracks = alt.Chart(track_data).mark_rect(
         color='black',
         height=15,
@@ -704,6 +732,11 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
         # Map annotations to y_index
         annots_plot = annotations_bed.copy()
         annots_plot['y_index'] = annots_plot['chr'].map(protein_to_y)
+        # DEBUG: Check if SMARCD1 annotations get valid y_index (chr must match track_data Protein)
+        _dropped = annots_plot[annots_plot['chr'].astype(str).str.contains('SMARCD1|SMRD1', case=False, na=False) & annots_plot['y_index'].isna()]
+        if not _dropped.empty:
+            print("[DEBUG SMARCD1] Domain rows DROPPED - chr not in protein_to_y:", _dropped[['chr','start','end','name']].to_dict('records'))
+            print("[DEBUG SMARCD1] protein_to_y keys:", list(protein_to_y.keys()))
         annots_plot = annots_plot.dropna(subset=['y_index']).copy()
         
         if not annots_plot.empty:
@@ -1199,6 +1232,17 @@ protein_lengths_master = load_protein_lengths()
 master_annotations_raw = load_protein_annotations()
 # Normalize annotation IDs to handle real_name vs raw_id format mismatches
 master_annotations = normalize_annotation_ids(master_annotations_raw.copy(), protein_lengths_master) if not master_annotations_raw.empty else master_annotations_raw
+
+# DEBUG: Temporary print for SMARCD1 mapping investigation
+_smarcd1_annots = master_annotations_raw[master_annotations_raw['ProteinID'].astype(str).str.contains('Q96GM5|SMARCD1|SMRD1', case=False, na=False)]
+_smarcd1_lengths = protein_lengths_master[protein_lengths_master['raw_id'].astype(str).str.contains('Q96GM5', na=False)]
+if not _smarcd1_annots.empty or not _smarcd1_lengths.empty:
+    print("[DEBUG SMARCD1] protein_annotation.csv ProteinID for SMARCD1:", _smarcd1_annots['ProteinID'].tolist() if not _smarcd1_annots.empty else "NONE")
+    print("[DEBUG SMARCD1] protein_lengths.csv raw_id for SMARCD1:", _smarcd1_lengths['raw_id'].tolist() if not _smarcd1_lengths.empty else "NONE")
+    if not master_annotations.empty and not _smarcd1_annots.empty:
+        _mapped = master_annotations[master_annotations['ProteinID'].isin(_smarcd1_annots['ProteinID'])][['ProteinID', 'MappedID']].drop_duplicates()
+        print("[DEBUG SMARCD1] After normalize - MappedID:", _mapped.to_dict('records') if not _mapped.empty else "NONE")
+
 loaded_sequences = load_fasta_sequences()
 
 # Title
@@ -1370,6 +1414,11 @@ if plot_button or st.session_state.plot_data_circos is not None:
             ['clean_name', 'StartRes', 'EndRes', 'AnnotName']
         ].copy()
         annotations_bed.columns = ['chr', 'start', 'end', 'name']
+        # DEBUG: Verify SMARCD1 SWIB domain in plotting_df
+        _smarcd1_bed = annotations_bed[annotations_bed['chr'].astype(str).str.contains('SMARCD1|SMRD1', case=False, na=False)]
+        if not _smarcd1_bed.empty:
+            print("[DEBUG SMARCD1] annotations_bed rows for SMARCD1 (SWIB 291-390):", _smarcd1_bed.to_dict('records'))
+            print("[DEBUG SMARCD1] id_map keys in selected proteins:", [k for k in id_map.keys() if 'Q96GM5' in str(k)])
         
         # Create color palette
         all_proteins_in_plot = sorted(sector_df['name'].unique())
