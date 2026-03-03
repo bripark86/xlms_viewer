@@ -1789,7 +1789,7 @@ if plot_button or st.session_state.plot_data_circos is not None:
                     if len(target_length) > 0:
                         target_length = target_length[0]
                         
-                        # Build set of equivalent IDs for matching (handles Chen sp|Q96GM5|SMRD1 vs internal sp|Q96GM5|SMARCD1)
+                        # Build set of equivalent IDs for matching (handles Chen sp|Q96GM5|SMRD1 vs internal sp|Q96GM5|SMARCD1 and PBRM/PBRM1)
                         target_protein_ids = {target_protein_id}
                         target_accession = None
                         if not target_row.empty:
@@ -1804,19 +1804,42 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         if not target_accession and "|" in str(target_protein_id):
                             target_accession = str(target_protein_id).split("|")[1]
                         
-                        # Filter links: match by raw_id, clean name variants, or accession (Protein1_acc/Protein2_acc)
+                        # Also include gene-name aliases (e.g. PBRM and PBRM1) for string-based datasets
+                        alias_names = set()
+                        if isinstance(target_display_name, str):
+                            base_name = target_display_name.strip()
+                            if base_name:
+                                alias_names.add(base_name)
+                                # If ends with 1 (PBRM1), also add base (PBRM)
+                                if base_name.upper().endswith('1'):
+                                    alias_names.add(base_name[:-1])
+                                # If base is PBRM, also add PBRM1
+                                if base_name.upper() == 'PBRM':
+                                    alias_names.add('PBRM1')
+                        
+                        # Console log for debugging mapping
+                        try:
+                            print(f"Mapping: {target_display_name} -> IDs={sorted(target_protein_ids)} accession={target_accession}")
+                        except Exception:
+                            pass
+                        
+                        # Filter links: match by raw_id, accession, or alias gene names when present
                         has_acc = 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns
                         if has_acc and target_accession:
                             target_links = links_df_orig[
                                 (links_df_orig['Protein1'].isin(target_protein_ids)) |
                                 (links_df_orig['Protein2'].isin(target_protein_ids)) |
                                 (links_df_orig['Protein1_acc'] == target_accession) |
-                                (links_df_orig['Protein2_acc'] == target_accession)
+                                (links_df_orig['Protein2_acc'] == target_accession) |
+                                (links_df_orig['Protein1'].isin(alias_names)) |
+                                (links_df_orig['Protein2'].isin(alias_names))
                             ].copy()
                         else:
                             target_links = links_df_orig[
                                 (links_df_orig['Protein1'].isin(target_protein_ids)) |
-                                (links_df_orig['Protein2'].isin(target_protein_ids))
+                                (links_df_orig['Protein2'].isin(target_protein_ids)) |
+                                (links_df_orig['Protein1'].isin(alias_names)) |
+                                (links_df_orig['Protein2'].isin(alias_names))
                             ].copy()
                         
                         
