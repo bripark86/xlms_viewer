@@ -445,6 +445,15 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
             # Proxl format (not fully implemented in original for these datasets)
             return None, None
         
+        # Ensure numeric types for LinkPos1, LinkPos2, Score across all views
+        for col in ['LinkPos1', 'LinkPos2']:
+            if col in links.columns:
+                links[col] = pd.to_numeric(links[col], errors='coerce')
+        if 'Score' in links.columns:
+            links['Score'] = pd.to_numeric(links['Score'], errors='coerce')
+        if 'NumPSMs' in links.columns:
+            links['NumPSMs'] = pd.to_numeric(links['NumPSMs'], errors='coerce')
+        
         return links, annots
     
     except Exception as e:
@@ -1286,18 +1295,27 @@ with st.sidebar:
         st.error("Could not load dataset. Please check that data files exist in the 'data/' directory.")
         st.stop()
     
-    # Get available proteins
+    # Get available proteins (match by raw_id or accession for external datasets like Chen)
     all_protein_ids = set(links_df_orig['Protein1'].unique()) | set(links_df_orig['Protein2'].unique())
+    all_accessions = set()
+    if 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns:
+        all_accessions = set(links_df_orig['Protein1_acc'].dropna().unique()) | set(links_df_orig['Protein2_acc'].dropna().unique())
     if not annotations_df_orig.empty:
-        # Use normalized MappedID if available, otherwise fallback to ProteinID
         if 'MappedID' in annotations_df_orig.columns:
             all_protein_ids.update(annotations_df_orig['MappedID'].dropna().unique())
         else:
-            all_protein_ids.update(annotations_df_orig['ProteinID'].unique())
+            all_protein_ids.update(annotations_df_orig['ProteinID'].dropna().unique())
     
-    relevant_proteins = protein_lengths_master[
-        protein_lengths_master['raw_id'].isin(all_protein_ids)
-    ].copy()
+    # Match by raw_id or accession (external datasets may use sp|Q96GM5|SMRD1 vs internal sp|Q96GM5|SMARCD1)
+    if 'accession' in protein_lengths_master.columns and all_accessions:
+        relevant_proteins = protein_lengths_master[
+            (protein_lengths_master['raw_id'].isin(all_protein_ids)) |
+            (protein_lengths_master['accession'].isin(all_accessions))
+        ].copy()
+    else:
+        relevant_proteins = protein_lengths_master[
+            protein_lengths_master['raw_id'].isin(all_protein_ids)
+        ].copy()
     
     # Create name mapping
     name_map_dict = get_name_map(relevant_proteins)
@@ -1342,12 +1360,34 @@ if plot_button or st.session_state.plot_data_circos is not None:
         # Process data for plotting
         selected_raw_ids = [protein_options[p] for p in selected_proteins]
         
+        # Build extended ID sets for Circos/plot filtering (handles Chen sp|Q96GM5|SMRD1 vs internal sp|Q96GM5|SMARCD1)
+        selected_protein_ids = set(selected_raw_ids)
+        selected_accessions = set()
+        for rid in selected_raw_ids:
+            row = protein_lengths_master[protein_lengths_master['raw_id'] == rid]
+            if not row.empty:
+                if 'accession' in row.columns:
+                    acc = row['accession'].iloc[0]
+                    if pd.notna(acc):
+                        selected_accessions.add(str(acc).strip())
+                        if 'short_name' in row.columns:
+                            short = row['short_name'].iloc[0]
+                            if pd.notna(short):
+                                selected_protein_ids.add(f"sp|{acc}|{str(short).strip()}")
+        
         with st.spinner("Processing plot data..."):
-            # Filter links
-            links_df = links_df_orig[
-                (links_df_orig['Protein1'].isin(selected_raw_ids)) &
-                (links_df_orig['Protein2'].isin(selected_raw_ids))
-            ].copy()
+            # Filter links: match by raw_id or accession (Protein1_acc/Protein2_acc)
+            has_acc_cols = 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns
+            if has_acc_cols and selected_accessions:
+                links_df = links_df_orig[
+                    ((links_df_orig['Protein1'].isin(selected_protein_ids)) | (links_df_orig['Protein1_acc'].isin(selected_accessions))) &
+                    ((links_df_orig['Protein2'].isin(selected_protein_ids)) | (links_df_orig['Protein2_acc'].isin(selected_accessions)))
+                ].copy()
+            else:
+                links_df = links_df_orig[
+                    (links_df_orig['Protein1'].isin(selected_protein_ids)) &
+                    (links_df_orig['Protein2'].isin(selected_protein_ids))
+                ].copy()
             
             # Filter annotations using normalized MappedID column
             if not annotations_df_orig.empty and 'MappedID' in annotations_df_orig.columns:
@@ -1379,10 +1419,21 @@ if plot_button or st.session_state.plot_data_circos is not None:
             sector_df.columns = ['name', 'end']
             sector_df['start'] = 0
             
-            # Map links to clean names
+            # Map links to clean names (include alternate IDs e.g. sp|acc|short_name for external datasets)
             id_map = dict(zip(protein_lengths['raw_id'], protein_lengths['clean_name']))
+            for _, row in protein_lengths.iterrows():
+                if 'accession' in row and 'short_name' in row and pd.notna(row['accession']) and pd.notna(row['short_name']):
+                    alt_id = f"sp|{row['accession']}|{str(row['short_name']).strip()}"
+                    id_map[alt_id] = row['clean_name']
             links_df['P1_clean'] = links_df['Protein1'].map(id_map)
             links_df['P2_clean'] = links_df['Protein2'].map(id_map)
+            # Fallback: map by accession if Protein1/Protein2 not in id_map
+            if links_df['P1_clean'].isna().any() and has_acc_cols:
+                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str), protein_lengths['clean_name']))
+                links_df.loc[links_df['P1_clean'].isna(), 'P1_clean'] = links_df.loc[links_df['P1_clean'].isna(), 'Protein1_acc'].map(acc_to_clean)
+            if links_df['P2_clean'].isna().any() and has_acc_cols:
+                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str), protein_lengths['clean_name']))
+                links_df.loc[links_df['P2_clean'].isna(), 'P2_clean'] = links_df.loc[links_df['P2_clean'].isna(), 'Protein2_acc'].map(acc_to_clean)
             links_df = links_df.dropna(subset=['P1_clean', 'P2_clean'])
             
             # Prepare annotations
@@ -1747,7 +1798,6 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 (links_df_orig['Protein2'].isin(target_protein_ids))
                             ].copy()
                         
-                        st.write(f"Debug: Found {len(target_links)} links for {target_display_name}")
                         
                         if not target_links.empty:
                             # Process links (support both exact raw_id and accession/alternate-ID match)
@@ -1821,10 +1871,6 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             else:
                                 target_annotations = pd.DataFrame()
                             
-                            # Debug: show annotation count when SMARCD1 is selected
-                            if target_display_name and ('SMARCD1' in str(target_display_name) or 'SMRD1' in str(target_display_name) or 'Q96GM5' in str(target_protein_id)):
-                                n_domains = len(target_annotations)
-                                st.sidebar.info(f"Debug: Found {n_domains} domain(s) for SMARCD1")
                             
                             # Create color palette for partners
                             all_partners = sorted(processed_links['partner_name'].unique())
