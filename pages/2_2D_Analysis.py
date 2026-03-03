@@ -83,12 +83,26 @@ FIXED_PALETTE = {
     "BICRA": "#FF4500", "BICRAL": "#FF6347", "BRD9": "#FF7F50"
 }
 
-# Canonical raw_id/alias -> display name for Circos/Lollipop sector matching (avoids PB1_HUMAN/PBRM vs PBRM1)
-GENE_NAME_MAP = {
-    "sp|Q86U86|PBRM1": "PBRM1",
-    "sp|Q86U86|PBRM": "PBRM1",
-    "sp|Q86U86|PB1_HUMAN": "PBRM1",
+# Synonym map: primary gene name -> all aliases used across datasets (SMCA4 vs SMARCA4, PBRM vs PBRM1, etc.)
+SYNONYM_MAP = {
+    'SMARCA4': ['SMARCA4', 'SMCA4', 'BRG1', 'sp|P51532|SMARCA4'],
+    'PBRM1': ['PBRM1', 'PBRM', 'BAF180', 'PB1_HUMAN', 'sp|Q86U86|PBRM1', 'sp|Q86U86|PBRM'],
+    'SMARCD1': ['SMARCD1', 'SMRD1', 'BAF60A', 'sp|Q96GM5|SMARCD1', 'sp|Q96GM5|SMRD1'],
+    'H33': ['H33', 'H3', 'HIST1H3A', 'sp|P84243|H33_HUMAN'],
 }
+# Reverse: alias -> primary for id_map
+ALIAS_TO_PRIMARY = {a: p for p, aliases in SYNONYM_MAP.items() for a in aliases}
+
+def get_aliases_for_protein(display_name, raw_id=None):
+    """Return set of all alias strings to match for this protein (display name, raw_id, synonyms)."""
+    s = {str(display_name).strip()} if display_name else set()
+    if raw_id:
+        s.add(str(raw_id).strip())
+    primary = (ALIAS_TO_PRIMARY.get(str(display_name).strip()) or 
+               ALIAS_TO_PRIMARY.get(str(raw_id).strip()) if raw_id else None)
+    if primary and primary in SYNONYM_MAP:
+        s.update(str(a).strip() for a in SYNONYM_MAP[primary])
+    return s
 
 # File info mapping (exact port from R)
 FILE_INFO_LIST = {
@@ -1398,11 +1412,14 @@ if plot_button or st.session_state.plot_data_circos is not None:
         # Process data for plotting
         selected_raw_ids = [protein_options[p] for p in selected_proteins]
         
-        # Build extended ID sets for Circos/plot filtering (handles Chen sp|Q96GM5|SMRD1 vs internal sp|Q96GM5|SMARCD1)
+        # Build extended ID sets for Circos/plot filtering (SYNONYM_MAP + raw_id, sp|acc|short)
         selected_protein_ids = set(selected_raw_ids)
         selected_accessions = set()
         for rid in selected_raw_ids:
             row = protein_lengths_master[protein_lengths_master['raw_id'] == rid]
+            display_name = name_map_dict.get(rid, rid)
+            aliases = get_aliases_for_protein(display_name, rid)
+            selected_protein_ids.update(aliases)
             if not row.empty:
                 if 'accession' in row.columns:
                     acc = row['accession'].iloc[0]
@@ -1463,20 +1480,27 @@ if plot_button or st.session_state.plot_data_circos is not None:
                 protein_lengths['clean_name'] = protein_lengths['raw_id'].map(name_map_dict)
             protein_lengths = protein_lengths.dropna(subset=['clean_name'])
             
-            # Create sector dataframe (strip names so Circos lookup matches)
-            sector_df = protein_lengths[['clean_name', 'length']].copy()
+            # Determine primary (canonical) name for sector display (SYNONYM_MAP aliases -> primary)
+            def _primary_name(cn):
+                return ALIAS_TO_PRIMARY.get(str(cn).strip(), str(cn).strip())
+            protein_lengths['primary_name'] = protein_lengths['clean_name'].astype(str).str.strip().apply(_primary_name)
+            
+            # Create sector dataframe (use primary names so SMCA4/PBRM display as SMARCA4/PBRM1)
+            sector_df = protein_lengths[['primary_name', 'length']].copy()
             sector_df.columns = ['name', 'end']
             sector_df['start'] = 0
             sector_df['name'] = sector_df['name'].astype(str).str.strip()
             
-            # Map links to clean names: merge canonical GENE_NAME_MAP so PBRM1/aliases map to same sector
-            id_map = dict(zip(protein_lengths['raw_id'].astype(str).str.strip(), protein_lengths['clean_name'].astype(str).str.strip()))
-            for k, v in GENE_NAME_MAP.items():
-                id_map[k.strip()] = v
+            # Map links to primary names: all aliases -> primary (SYNONYM_MAP + raw_id, sp|acc|short)
+            id_map = {}
             for _, row in protein_lengths.iterrows():
+                pid = str(row['primary_name']).strip()
+                id_map[str(row['raw_id']).strip()] = pid
+                for alias in SYNONYM_MAP.get(pid, []):
+                    id_map[str(alias).strip()] = pid
                 if 'accession' in row and 'short_name' in row and pd.notna(row['accession']) and pd.notna(row['short_name']):
                     alt_id = f"sp|{row['accession']}|{str(row['short_name']).strip()}"
-                    id_map[alt_id] = str(row['clean_name']).strip()
+                    id_map[alt_id] = pid
             # Use stripped Protein1/Protein2 so whitespace in CSV does not break match
             p1_stripped = links_df['Protein1'].astype(str).str.strip()
             p2_stripped = links_df['Protein2'].astype(str).str.strip()
@@ -1826,8 +1850,9 @@ if plot_button or st.session_state.plot_data_circos is not None:
                     if len(target_length) > 0:
                         target_length = target_length[0]
                         
-                        # Build set of equivalent IDs for matching (handles Chen sp|Q96GM5|SMRD1 vs internal sp|Q96GM5|SMARCD1 and PBRM/PBRM1)
-                        target_protein_ids = {target_protein_id}
+                        # Build set of equivalent IDs for matching (SYNONYM_MAP + raw_id, sp|acc|short)
+                        target_aliases = get_aliases_for_protein(target_display_name, target_protein_id)
+                        target_protein_ids = set(target_aliases)
                         target_accession = None
                         if not target_row.empty:
                             if 'accession' in target_row.columns:
@@ -1841,26 +1866,7 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         if not target_accession and "|" in str(target_protein_id):
                             target_accession = str(target_protein_id).split("|")[1]
                         
-                        # Also include gene-name aliases (e.g. PBRM and PBRM1) for string-based datasets
-                        alias_names = set()
-                        if isinstance(target_display_name, str):
-                            base_name = target_display_name.strip()
-                            if base_name:
-                                alias_names.add(base_name)
-                                # If ends with 1 (PBRM1), also add base (PBRM)
-                                if base_name.upper().endswith('1'):
-                                    alias_names.add(base_name[:-1])
-                                # If base is PBRM, also add PBRM1
-                                if base_name.upper() == 'PBRM':
-                                    alias_names.add('PBRM1')
-                        
-                        # Console log for debugging mapping
-                        try:
-                            print(f"Mapping: {target_display_name} -> IDs={sorted(target_protein_ids)} accession={target_accession}")
-                        except Exception:
-                            pass
-                        
-                        # Filter links: match by raw_id, accession, or alias (strip for exact match)
+                        # Filter links: match by raw_id, accession, or SYNONYM_MAP alias (strip for exact match)
                         has_acc = 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns
                         lp1 = links_df_orig['Protein1'].astype(str).str.strip()
                         lp2 = links_df_orig['Protein2'].astype(str).str.strip()
@@ -1871,16 +1877,12 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 (lp1.isin(target_protein_ids)) |
                                 (lp2.isin(target_protein_ids)) |
                                 (la1 == target_accession) |
-                                (la2 == target_accession) |
-                                (lp1.isin(alias_names)) |
-                                (lp2.isin(alias_names))
+                                (la2 == target_accession)
                             ].copy()
                         else:
                             target_links = links_df_orig[
                                 (lp1.isin(target_protein_ids)) |
-                                (lp2.isin(target_protein_ids)) |
-                                (lp1.isin(alias_names)) |
-                                (lp2.isin(alias_names))
+                                (lp2.isin(target_protein_ids))
                             ].copy()
                         
                         
