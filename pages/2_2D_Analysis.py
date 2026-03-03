@@ -83,6 +83,13 @@ FIXED_PALETTE = {
     "BICRA": "#FF4500", "BICRAL": "#FF6347", "BRD9": "#FF7F50"
 }
 
+# Canonical raw_id/alias -> display name for Circos/Lollipop sector matching (avoids PB1_HUMAN/PBRM vs PBRM1)
+GENE_NAME_MAP = {
+    "sp|Q86U86|PBRM1": "PBRM1",
+    "sp|Q86U86|PBRM": "PBRM1",
+    "sp|Q86U86|PB1_HUMAN": "PBRM1",
+}
+
 # File info mapping (exact port from R)
 FILE_INFO_LIST = {
     "both_cbaf_pbaf": {"stem": "Both_CBAF_and_PBAF_xi_net_between_subunit", "type": "standard"},
@@ -399,7 +406,8 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
             
             links = pd.read_csv(links_path)
             annots = protein_annotations_df.copy()
-            
+            links['Protein1'] = links['Protein1'].astype(str).str.strip()
+            links['Protein2'] = links['Protein2'].astype(str).str.strip()
             # Extract accessions
             links['Protein1_acc'] = links['Protein1'].str.extract(r'\|([^|]+)\|', expand=False)
             links['Protein2_acc'] = links['Protein2'].str.extract(r'\|([^|]+)\|', expand=False)
@@ -438,10 +446,16 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
             
             links = pd.read_csv(links_path)
             annots = protein_annotations_df.copy()
-            
+            # Normalize whitespace so filtering and id_map match
+            links['Protein1'] = links['Protein1'].astype(str).str.strip()
+            links['Protein2'] = links['Protein2'].astype(str).str.strip()
             # Extract accessions (same as standard - full UniProt ID format)
             links['Protein1_acc'] = links['Protein1'].str.extract(r'\|([^|]+)\|', expand=False)
             links['Protein2_acc'] = links['Protein2'].str.extract(r'\|([^|]+)\|', expand=False)
+            if links['Protein1_acc'].notna().any():
+                links['Protein1_acc'] = links['Protein1_acc'].astype(str).str.strip()
+            if links['Protein2_acc'].notna().any():
+                links['Protein2_acc'] = links['Protein2_acc'].astype(str).str.strip()
             
         else:
             # Proxl format (not fully implemented in original for these datasets)
@@ -854,6 +868,8 @@ def generate_circos_plot(plot_data, show_intra_links=True):
     links_df = plot_data['links_df'].copy()
     annotations_bed = plot_data['annotations_bed'].copy()
     color_palette = plot_data['color_palette']
+    # Normalize sector names so link P1_clean/P2_clean match
+    sector_df['name'] = sector_df['name'].astype(str).str.strip()
     
     # Calculate total length for angle distribution
     total_length = sector_df['end'].sum()
@@ -865,7 +881,7 @@ def generate_circos_plot(plot_data, show_intra_links=True):
     sector_ranges = {}
     
     for _, row in sector_df.iterrows():
-        protein_name = row['name']
+        protein_name = str(row['name']).strip()
         length = row['end']
         
         # Calculate angle span for this protein
@@ -949,7 +965,7 @@ def generate_circos_plot(plot_data, show_intra_links=True):
     # Add annotation tracks
     if not annotations_bed.empty:
         for _, annot in annotations_bed.iterrows():
-            protein_name = annot['chr']
+            protein_name = str(annot['chr']).strip()
             if protein_name not in sector_ranges:
                 continue
             
@@ -1001,10 +1017,10 @@ def generate_circos_plot(plot_data, show_intra_links=True):
     if not show_intra_links:
         links_to_plot = links_to_plot[links_to_plot['P1_clean'] != links_to_plot['P2_clean']]
     
-    # Add links
+    # Add links (strip P1_clean/P2_clean so they match sector_angles keys)
     for _, link in links_to_plot.iterrows():
-        p1 = link['P1_clean']
-        p2 = link['P2_clean']
+        p1 = str(link['P1_clean']).strip()
+        p2 = str(link['P2_clean']).strip()
         pos1 = link['LinkPos1']
         pos2 = link['LinkPos2']
         
@@ -1398,17 +1414,21 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 selected_protein_ids.add(f"sp|{acc}|{str(short).strip()}")
         
         with st.spinner("Processing plot data..."):
-            # Filter links: match by raw_id or accession (Protein1_acc/Protein2_acc)
+            # Filter links: match by raw_id or accession (strip so exact match, e.g. sp|Q86U86|PBRM1)
             has_acc_cols = 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns
+            p1_str = links_df_orig['Protein1'].astype(str).str.strip()
+            p2_str = links_df_orig['Protein2'].astype(str).str.strip()
             if has_acc_cols and selected_accessions:
+                acc1 = links_df_orig['Protein1_acc'].astype(str).str.strip()
+                acc2 = links_df_orig['Protein2_acc'].astype(str).str.strip()
                 links_df = links_df_orig[
-                    ((links_df_orig['Protein1'].isin(selected_protein_ids)) | (links_df_orig['Protein1_acc'].isin(selected_accessions))) &
-                    ((links_df_orig['Protein2'].isin(selected_protein_ids)) | (links_df_orig['Protein2_acc'].isin(selected_accessions)))
+                    ((p1_str.isin(selected_protein_ids)) | (acc1.isin(selected_accessions))) &
+                    ((p2_str.isin(selected_protein_ids)) | (acc2.isin(selected_accessions)))
                 ].copy()
             else:
                 links_df = links_df_orig[
-                    (links_df_orig['Protein1'].isin(selected_protein_ids)) &
-                    (links_df_orig['Protein2'].isin(selected_protein_ids))
+                    (p1_str.isin(selected_protein_ids)) &
+                    (p2_str.isin(selected_protein_ids))
                 ].copy()
             
             # Filter annotations using normalized MappedID column
@@ -1443,27 +1463,36 @@ if plot_button or st.session_state.plot_data_circos is not None:
                 protein_lengths['clean_name'] = protein_lengths['raw_id'].map(name_map_dict)
             protein_lengths = protein_lengths.dropna(subset=['clean_name'])
             
-            # Create sector dataframe
+            # Create sector dataframe (strip names so Circos lookup matches)
             sector_df = protein_lengths[['clean_name', 'length']].copy()
             sector_df.columns = ['name', 'end']
             sector_df['start'] = 0
+            sector_df['name'] = sector_df['name'].astype(str).str.strip()
             
-            # Map links to clean names (include alternate IDs e.g. sp|acc|short_name for external datasets)
-            id_map = dict(zip(protein_lengths['raw_id'], protein_lengths['clean_name']))
+            # Map links to clean names: merge canonical GENE_NAME_MAP so PBRM1/aliases map to same sector
+            id_map = dict(zip(protein_lengths['raw_id'].astype(str).str.strip(), protein_lengths['clean_name'].astype(str).str.strip()))
+            for k, v in GENE_NAME_MAP.items():
+                id_map[k.strip()] = v
             for _, row in protein_lengths.iterrows():
                 if 'accession' in row and 'short_name' in row and pd.notna(row['accession']) and pd.notna(row['short_name']):
                     alt_id = f"sp|{row['accession']}|{str(row['short_name']).strip()}"
-                    id_map[alt_id] = row['clean_name']
-            links_df['P1_clean'] = links_df['Protein1'].map(id_map)
-            links_df['P2_clean'] = links_df['Protein2'].map(id_map)
+                    id_map[alt_id] = str(row['clean_name']).strip()
+            # Use stripped Protein1/Protein2 so whitespace in CSV does not break match
+            p1_stripped = links_df['Protein1'].astype(str).str.strip()
+            p2_stripped = links_df['Protein2'].astype(str).str.strip()
+            links_df['P1_clean'] = p1_stripped.map(id_map)
+            links_df['P2_clean'] = p2_stripped.map(id_map)
             # Fallback: map by accession if Protein1/Protein2 not in id_map
             if links_df['P1_clean'].isna().any() and has_acc_cols:
-                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str), protein_lengths['clean_name']))
-                links_df.loc[links_df['P1_clean'].isna(), 'P1_clean'] = links_df.loc[links_df['P1_clean'].isna(), 'Protein1_acc'].map(acc_to_clean)
+                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str).str.strip(), protein_lengths['clean_name'].astype(str).str.strip()))
+                links_df.loc[links_df['P1_clean'].isna(), 'P1_clean'] = links_df.loc[links_df['P1_clean'].isna(), 'Protein1_acc'].astype(str).str.strip().map(acc_to_clean)
             if links_df['P2_clean'].isna().any() and has_acc_cols:
-                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str), protein_lengths['clean_name']))
-                links_df.loc[links_df['P2_clean'].isna(), 'P2_clean'] = links_df.loc[links_df['P2_clean'].isna(), 'Protein2_acc'].map(acc_to_clean)
+                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str).str.strip(), protein_lengths['clean_name'].astype(str).str.strip()))
+                links_df.loc[links_df['P2_clean'].isna(), 'P2_clean'] = links_df.loc[links_df['P2_clean'].isna(), 'Protein2_acc'].astype(str).str.strip().map(acc_to_clean)
+            links_df['P1_clean'] = links_df['P1_clean'].astype(str).str.strip()
+            links_df['P2_clean'] = links_df['P2_clean'].astype(str).str.strip()
             links_df = links_df.dropna(subset=['P1_clean', 'P2_clean'])
+            links_df = links_df[(links_df['P1_clean'].astype(str).str.strip() != '') & (links_df['P2_clean'].astype(str).str.strip() != '')]
             
             # Prepare annotations
             if not annotations_df.empty and 'MappedID' in annotations_df.columns:
@@ -1831,23 +1860,27 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         except Exception:
                             pass
                         
-                        # Filter links: match by raw_id, accession, or alias gene names when present
+                        # Filter links: match by raw_id, accession, or alias (strip for exact match)
                         has_acc = 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns
+                        lp1 = links_df_orig['Protein1'].astype(str).str.strip()
+                        lp2 = links_df_orig['Protein2'].astype(str).str.strip()
                         if has_acc and target_accession:
+                            la1 = links_df_orig['Protein1_acc'].astype(str).str.strip()
+                            la2 = links_df_orig['Protein2_acc'].astype(str).str.strip()
                             target_links = links_df_orig[
-                                (links_df_orig['Protein1'].isin(target_protein_ids)) |
-                                (links_df_orig['Protein2'].isin(target_protein_ids)) |
-                                (links_df_orig['Protein1_acc'] == target_accession) |
-                                (links_df_orig['Protein2_acc'] == target_accession) |
-                                (links_df_orig['Protein1'].isin(alias_names)) |
-                                (links_df_orig['Protein2'].isin(alias_names))
+                                (lp1.isin(target_protein_ids)) |
+                                (lp2.isin(target_protein_ids)) |
+                                (la1 == target_accession) |
+                                (la2 == target_accession) |
+                                (lp1.isin(alias_names)) |
+                                (lp2.isin(alias_names))
                             ].copy()
                         else:
                             target_links = links_df_orig[
-                                (links_df_orig['Protein1'].isin(target_protein_ids)) |
-                                (links_df_orig['Protein2'].isin(target_protein_ids)) |
-                                (links_df_orig['Protein1'].isin(alias_names)) |
-                                (links_df_orig['Protein2'].isin(alias_names))
+                                (lp1.isin(target_protein_ids)) |
+                                (lp2.isin(target_protein_ids)) |
+                                (lp1.isin(alias_names)) |
+                                (lp2.isin(alias_names))
                             ].copy()
                         
                         
