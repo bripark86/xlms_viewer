@@ -83,15 +83,25 @@ FIXED_PALETTE = {
     "BICRA": "#FF4500", "BICRAL": "#FF6347", "BRD9": "#FF7F50"
 }
 
-# Synonym map: primary gene name -> all aliases used across datasets (SMCA4 vs SMARCA4, PBRM vs PBRM1, etc.)
+# Global Alias Resolver: primary gene name -> all variants used across datasets (SMCA4 vs SMARCA4, PBRM vs PBRM1, etc.)
+# Used for filtering (no direct ==) and standardized UI labels.
 SYNONYM_MAP = {
     'SMARCA4': ['SMARCA4', 'SMCA4', 'BRG1', 'sp|P51532|SMARCA4'],
-    'PBRM1': ['PBRM1', 'PBRM', 'BAF180', 'PB1_HUMAN', 'sp|Q86U86|PBRM1', 'sp|Q86U86|PBRM'],
+    'SMARCA2': ['SMARCA2', 'SMCA2', 'BRM', 'sp|P51531|SMARCA2'],
     'SMARCD1': ['SMARCD1', 'SMRD1', 'BAF60A', 'sp|Q96GM5|SMARCD1', 'sp|Q96GM5|SMRD1'],
+    'PBRM1': ['PBRM1', 'PBRM', 'BAF180', 'sp|Q86U86|PBRM1'],
+    'ARID2': ['ARID2', 'sp|Q68CP9|ARID2'],
     'H33': ['H33', 'H3', 'HIST1H3A', 'sp|P84243|H33_HUMAN'],
 }
 # Reverse: alias -> primary for id_map
 ALIAS_TO_PRIMARY = {a: p for p, aliases in SYNONYM_MAP.items() for a in aliases}
+
+def get_standardized_display_name(name):
+    """Return primary (canonical) name for UI labels when name is a known alias."""
+    if not name or (isinstance(name, float) and pd.isna(name)):
+        return name
+    s = str(name).strip()
+    return ALIAS_TO_PRIMARY.get(s, s) if s else name
 
 def get_aliases_for_protein(display_name, raw_id=None):
     """Return set of all alias strings to match for this protein (display name, raw_id, synonyms)."""
@@ -354,7 +364,7 @@ def load_fasta_sequences():
         return {}
 
 def get_name_map(protein_lengths_df):
-    """Create mapping from raw_id to display name. Prefer clean_name (canonical, e.g. PBRM1) for label consistency."""
+    """Create mapping from raw_id to standardized display name (primary from SYNONYM_MAP when applicable)."""
     if protein_lengths_df.empty:
         return {}
     
@@ -368,7 +378,10 @@ def get_name_map(protein_lengths_df):
         return ""
     
     labels = protein_lengths_df.apply(_label, axis=1)
-    return dict(zip(protein_lengths_df['raw_id'], labels))
+    return {
+        rid: get_standardized_display_name(lbl) if lbl else str(rid)
+        for rid, lbl in zip(protein_lengths_df['raw_id'], labels)
+    }
 
 def get_clean_partner_name(raw_id, name_map, protein_lengths_df=None):
     """Get clean partner name from raw_id, prioritizing real_name from CSV with fallback."""
@@ -1370,12 +1383,15 @@ with st.sidebar:
 
             # Prefer canonical clean_name (e.g. PBRM1) when real_name just duplicates short_name
             if clean and (not real or real == short):
-                return clean
-            if real:
-                return real
-            if short:
-                return short
-            return clean or real or short
+                raw_label = clean
+            elif real:
+                raw_label = real
+            elif short:
+                raw_label = short
+            else:
+                raw_label = clean or real or short
+            # Standardize to primary name for UI (SMCA4 -> SMARCA4, PBRM -> PBRM1)
+            return get_standardized_display_name(raw_label)
 
         display_names = relevant_proteins.apply(_display_label, axis=1)
     else:
@@ -1839,7 +1855,9 @@ if plot_button or st.session_state.plot_data_circos is not None:
                 
                 if target_protein_display:
                     target_protein_id = protein_options[target_protein_display]
-                    target_display_name = name_map_dict.get(target_protein_id, target_protein_id)
+                    target_display_name = get_standardized_display_name(
+                        name_map_dict.get(target_protein_id, target_protein_id)
+                    )
                     
                     # Get target protein data
                     target_row = protein_lengths_master[
@@ -1866,34 +1884,32 @@ if plot_button or st.session_state.plot_data_circos is not None:
                         if not target_accession and "|" in str(target_protein_id):
                             target_accession = str(target_protein_id).split("|")[1]
                         
-                        # Filter links: match by raw_id, accession, or SYNONYM_MAP alias (strip for exact match)
+                        # Filter links: use .isin(alias_list) for Protein1/Protein2 (no direct ==)
                         has_acc = 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns
                         lp1 = links_df_orig['Protein1'].astype(str).str.strip()
                         lp2 = links_df_orig['Protein2'].astype(str).str.strip()
+                        target_ids_plus_acc = set(target_protein_ids)
+                        if target_accession:
+                            target_ids_plus_acc.add(target_accession)
+                        p1_match = lp1.isin(target_ids_plus_acc)
+                        p2_match = lp2.isin(target_ids_plus_acc)
                         if has_acc and target_accession:
                             la1 = links_df_orig['Protein1_acc'].astype(str).str.strip()
                             la2 = links_df_orig['Protein2_acc'].astype(str).str.strip()
-                            target_links = links_df_orig[
-                                (lp1.isin(target_protein_ids)) |
-                                (lp2.isin(target_protein_ids)) |
-                                (la1 == target_accession) |
-                                (la2 == target_accession)
-                            ].copy()
+                            target_links = links_df_orig[(p1_match | la1.isin({target_accession})) | (p2_match | la2.isin({target_accession}))].copy()
                         else:
-                            target_links = links_df_orig[
-                                (lp1.isin(target_protein_ids)) |
-                                (lp2.isin(target_protein_ids))
-                            ].copy()
+                            target_links = links_df_orig[(p1_match | p2_match)].copy()
                         
                         
                         if not target_links.empty:
                             # Process links (support both exact raw_id and accession/alternate-ID match)
                             processed_links = target_links.copy()
                             def _is_p1_target(row):
-                                p1_match = row['Protein1'] in target_protein_ids
+                                p1_str = str(row['Protein1']).strip()
+                                p1_match = p1_str in target_protein_ids
                                 if not p1_match and has_acc and target_accession:
                                     p1_acc = row.get('Protein1_acc')
-                                    p1_match = p1_acc is not None and str(p1_acc) == str(target_accession)
+                                    p1_match = p1_acc is not None and str(p1_acc).strip() in {str(target_accession).strip()}
                                 return p1_match
                             processed_links['_p1_is_target'] = processed_links.apply(_is_p1_target, axis=1)
                             processed_links['target_pos'] = processed_links.apply(
@@ -1922,15 +1938,16 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 elif 'short_name' in row.index and pd.notna(row.get('short_name')) and str(row['short_name']).strip() != "":
                                     id_to_realname[rid] = str(row['short_name']).strip()
                             
-                            # Apply mapping with fallback function
+                            # Apply mapping with fallback function, then standardize to primary for UI
                             processed_links['partner_name'] = processed_links['partner_id'].apply(
                                 lambda x: get_clean_partner_name(x, id_to_realname, protein_lengths_master)
                             )
-                            # For self-links, use target name (partner_id may be alternate format e.g. sp|Q96GM5|SMRD1)
-                            processed_links.loc[
-                                processed_links['partner_id'].isin(target_protein_ids),
-                                'partner_name'
-                            ] = target_display_name
+                            processed_links['partner_name'] = processed_links['partner_name'].apply(get_standardized_display_name)
+                            # For self-links, use target name (partner_id may be alias e.g. SMCA4, sp|Q96GM5|SMRD1)
+                            partner_is_target = processed_links['partner_id'].apply(
+                                lambda x: str(x).strip() in target_protein_ids
+                            )
+                            processed_links.loc[partner_is_target, 'partner_name'] = target_display_name
                             
                             # Calculate y positions
                             height_factor = st.slider(
@@ -2164,23 +2181,23 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 elif 'short_name' in row.index and pd.notna(row.get('short_name')) and str(row['short_name']).strip() != "":
                                     id_to_realname[rid] = str(row['short_name']).strip()
                             
-                            # Apply mapping with fallback function
+                            # Apply mapping with fallback, then standardize to primary for UI
                             processed_links['partner_real_name'] = processed_links['partner_id'].apply(
                                 lambda x: get_clean_partner_name(x, id_to_realname, protein_lengths_master)
                             )
-                            
-                            # For self-links, use target display name (partner_id may be alternate format)
-                            processed_links.loc[
-                                processed_links['partner_id'].isin(target_protein_ids),
-                                'partner_real_name'
-                            ] = target_display_name
+                            processed_links['partner_real_name'] = processed_links['partner_real_name'].apply(get_standardized_display_name)
+                            # For self-links, use target display name (partner_id may be alias)
+                            partner_is_target_summary = processed_links['partner_id'].apply(
+                                lambda x: str(x).strip() in target_protein_ids
+                            )
+                            processed_links.loc[partner_is_target_summary, 'partner_real_name'] = target_display_name
                             
                             summary_df = processed_links.groupby('partner_real_name').size().reset_index(name='Number of Cross-links')
                             summary_df = summary_df.sort_values('Number of Cross-links', ascending=False)
                             summary_df.columns = ['Partner Subunit', 'Number of Cross-links']
                             st.dataframe(summary_df, width='stretch', hide_index=True)
                         else:
-                            st.info(f"No cross-links found for {target_display_name} in the selected dataset.")
+                            st.info("No cross-links found in the selected dataset.")
         
 
 else:
