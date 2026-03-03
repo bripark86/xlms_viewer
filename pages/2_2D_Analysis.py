@@ -99,7 +99,8 @@ FILE_INFO_LIST = {
     "ss18_flag_proxl": {"stem": "SS18_Flag_xlinks-proteins-search-257-2025-10-09", "type": "standard_shortname"},
     "phf10_ha_proxl": {"stem": "PHF10_HA_xlinks-proteins-search-261-2025-10-09", "type": "standard_shortname"},
     "ha_brd7_proxl": {"stem": "HA_BRD7_xlinks-proteins-search-259-2025-10-09", "type": "standard_shortname"},
-    "chen_ncbaf_ncp_cxms": {"stem": "Chen_ncBAF_NCP_cxms", "type": "external"}
+    "chen_ncbaf_ncp_cxms": {"stem": "Chen_ncBAF_NCP_cxms", "type": "external"},
+    "yanhuixu_2021_pbaf_ncp_cxms": {"stem": "YanhuiXu_2021_pBAF_NCP_cxms", "type": "external"}
 }
 
 # CSS for sequence viewer
@@ -1268,18 +1269,24 @@ with st.sidebar:
             "HA PHF10 (Proxl)": "phf10_ha_proxl",
             "HA BRD7 (Proxl)": "ha_brd7_proxl"
         }
+        selected_dataset_display = st.selectbox(
+            "Select Dataset",
+            options=list(dataset_options.keys()),
+            key="dataset_selector"
+        )
+        selected_dataset_key = dataset_options[selected_dataset_display]
     else:
-        dataset_options = {
-            "Chen_ncBAF_NCP_cxms.csv": "chen_ncbaf_ncp_cxms"
+        # External (Literature): Select Paper/Dataset sub-dropdown
+        external_paper_options = {
+            "Chen et al. (2020)": "chen_ncbaf_ncp_cxms",
+            "Yanhui Xu et al. (2021)": "yanhuixu_2021_pbaf_ncp_cxms"
         }
-    
-    selected_dataset_display = st.selectbox(
-        "Select Dataset",
-        options=list(dataset_options.keys()),
-        key="dataset_selector"
-    )
-    
-    selected_dataset_key = dataset_options[selected_dataset_display]
+        selected_paper_display = st.selectbox(
+            "Select Paper/Dataset",
+            options=list(external_paper_options.keys()),
+            key="external_paper_selector"
+        )
+        selected_dataset_key = external_paper_options[selected_paper_display]
     
     st.divider()
     
