@@ -224,7 +224,7 @@ def load_protein_lengths():
         st.error(f"Error loading protein_lengths.csv: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour to allow periodic refresh
+@st.cache_data(ttl=0)  # No cache - always load fresh data to pick up CSV updates
 def load_protein_annotations():
     """Load protein annotations CSV."""
     try:
@@ -1811,6 +1811,11 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 ].copy()
                             else:
                                 target_annotations = pd.DataFrame()
+                            
+                            # Debug: show annotation count when SMARCD1 is selected
+                            if target_display_name and ('SMARCD1' in str(target_display_name) or 'SMRD1' in str(target_display_name) or 'Q96GM5' in str(target_protein_id)):
+                                n_domains = len(target_annotations)
+                                st.sidebar.info(f"Debug: Found {n_domains} domain(s) for SMARCD1")
                             
                             # Create color palette for partners
                             all_partners = sorted(processed_links['partner_name'].unique())
