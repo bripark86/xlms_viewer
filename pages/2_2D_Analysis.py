@@ -83,13 +83,14 @@ FIXED_PALETTE = {
     "BICRA": "#FF4500", "BICRAL": "#FF6347", "BRD9": "#FF7F50"
 }
 
-# Global Alias Resolver: primary gene name -> all variants used across datasets (SMCA4 vs SMARCA4, PBRM vs PBRM1, etc.)
-# Used for filtering (no direct ==) and standardized UI labels.
+# Global Alias Resolver: primary gene name -> all variants used across datasets (internal mapping, no separate CSV)
+# Used for filtering (.isin) and Circos/Lollipop rendering so lines have a destination.
 SYNONYM_MAP = {
     'SMARCA4': ['SMARCA4', 'SMCA4', 'BRG1', 'sp|P51532|SMARCA4'],
-    'SMARCA2': ['SMARCA2', 'SMCA2', 'BRM', 'sp|P51531|SMARCA2'],
-    'SMARCD1': ['SMARCD1', 'SMRD1', 'BAF60A', 'sp|Q96GM5|SMARCD1', 'sp|Q96GM5|SMRD1'],
     'PBRM1': ['PBRM1', 'PBRM', 'BAF180', 'sp|Q86U86|PBRM1'],
+    'ACTL6A': ['ACTL6A', 'ACL6A', 'BAF53A', 'sp|O96019|ACL6A'],
+    'SMARCD1': ['SMARCD1', 'SMRD1', 'BAF60A', 'sp|Q96GM5|SMARCD1', 'sp|Q96GM5|SMRD1'],
+    'SMARCA2': ['SMARCA2', 'SMCA2', 'BRM', 'sp|P51531|SMARCA2'],
     'ARID2': ['ARID2', 'sp|Q68CP9|ARID2'],
     'H33': ['H33', 'H3', 'HIST1H3A', 'sp|P84243|H33_HUMAN'],
 }
@@ -445,7 +446,8 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
                 return None, None
             
             links_orig = pd.read_csv(links_path)
-            
+            links_orig['Protein1'] = links_orig['Protein1'].astype(str).str.strip()
+            links_orig['Protein2'] = links_orig['Protein2'].astype(str).str.strip()
             # Map short names to raw_ids
             name_to_rawid = protein_lengths_df[['short_name', 'raw_id']].drop_duplicates()
             
@@ -1522,13 +1524,13 @@ if plot_button or st.session_state.plot_data_circos is not None:
             p2_stripped = links_df['Protein2'].astype(str).str.strip()
             links_df['P1_clean'] = p1_stripped.map(id_map)
             links_df['P2_clean'] = p2_stripped.map(id_map)
-            # Fallback: map by accession if Protein1/Protein2 not in id_map
+            # Fallback: map by accession if Protein1/Protein2 not in id_map (use primary_name for sector match)
             if links_df['P1_clean'].isna().any() and has_acc_cols:
-                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str).str.strip(), protein_lengths['clean_name'].astype(str).str.strip()))
-                links_df.loc[links_df['P1_clean'].isna(), 'P1_clean'] = links_df.loc[links_df['P1_clean'].isna(), 'Protein1_acc'].astype(str).str.strip().map(acc_to_clean)
+                acc_to_primary = dict(zip(protein_lengths['accession'].astype(str).str.strip(), protein_lengths['primary_name'].astype(str).str.strip()))
+                links_df.loc[links_df['P1_clean'].isna(), 'P1_clean'] = links_df.loc[links_df['P1_clean'].isna(), 'Protein1_acc'].astype(str).str.strip().map(acc_to_primary)
             if links_df['P2_clean'].isna().any() and has_acc_cols:
-                acc_to_clean = dict(zip(protein_lengths['accession'].astype(str).str.strip(), protein_lengths['clean_name'].astype(str).str.strip()))
-                links_df.loc[links_df['P2_clean'].isna(), 'P2_clean'] = links_df.loc[links_df['P2_clean'].isna(), 'Protein2_acc'].astype(str).str.strip().map(acc_to_clean)
+                acc_to_primary = dict(zip(protein_lengths['accession'].astype(str).str.strip(), protein_lengths['primary_name'].astype(str).str.strip()))
+                links_df.loc[links_df['P2_clean'].isna(), 'P2_clean'] = links_df.loc[links_df['P2_clean'].isna(), 'Protein2_acc'].astype(str).str.strip().map(acc_to_primary)
             links_df['P1_clean'] = links_df['P1_clean'].astype(str).str.strip()
             links_df['P2_clean'] = links_df['P2_clean'].astype(str).str.strip()
             links_df = links_df.dropna(subset=['P1_clean', 'P2_clean'])
