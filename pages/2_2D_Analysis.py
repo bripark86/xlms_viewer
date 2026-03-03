@@ -333,18 +333,20 @@ def load_fasta_sequences():
         return {}
 
 def get_name_map(protein_lengths_df):
-    """Create mapping from raw_id to display name, prioritizing real_name."""
+    """Create mapping from raw_id to display name. Prefer clean_name (canonical, e.g. PBRM1) for label consistency."""
     if protein_lengths_df.empty:
         return {}
     
-    if 'real_name' in protein_lengths_df.columns:
-        labels = protein_lengths_df.apply(
-            lambda row: row['real_name'] if pd.notna(row['real_name']) and str(row['real_name']).strip() != "" else row['short_name'],
-            axis=1
-        )
-    else:
-        labels = protein_lengths_df['short_name']
+    def _label(row):
+        if 'clean_name' in row.index and pd.notna(row.get('clean_name')) and str(row['clean_name']).strip() != "":
+            return str(row['clean_name']).strip()
+        if 'real_name' in row.index and pd.notna(row.get('real_name')) and str(row['real_name']).strip() != "":
+            return str(row['real_name']).strip()
+        if 'short_name' in row.index and pd.notna(row.get('short_name')):
+            return str(row['short_name']).strip()
+        return ""
     
+    labels = protein_lengths_df.apply(_label, axis=1)
     return dict(zip(protein_lengths_df['raw_id'], labels))
 
 def get_clean_partner_name(raw_id, name_map, protein_lengths_df=None):
@@ -355,18 +357,17 @@ def get_clean_partner_name(raw_id, name_map, protein_lengths_df=None):
         if pd.notna(mapped_name) and str(mapped_name).strip() != "":
             return mapped_name
     
-    # Try direct lookup in protein_lengths_df if provided
-    if protein_lengths_df is not None and 'real_name' in protein_lengths_df.columns:
+    # Try direct lookup in protein_lengths_df if provided (prefer clean_name for label consistency)
+    if protein_lengths_df is not None:
         match = protein_lengths_df[protein_lengths_df['raw_id'] == raw_id]
         if not match.empty:
-            real_name = match.iloc[0]['real_name']
-            if pd.notna(real_name) and str(real_name).strip() != "":
-                return real_name
-            # Try short_name as fallback
-            if 'short_name' in match.columns:
-                short_name = match.iloc[0]['short_name']
-                if pd.notna(short_name) and str(short_name).strip() != "":
-                    return short_name
+            row = match.iloc[0]
+            if 'clean_name' in row.index and pd.notna(row.get('clean_name')) and str(row['clean_name']).strip() != "":
+                return str(row['clean_name']).strip()
+            if 'real_name' in row.index and pd.notna(row.get('real_name')) and str(row['real_name']).strip() != "":
+                return str(row['real_name']).strip()
+            if 'short_name' in row.index and pd.notna(row.get('short_name')) and str(row['short_name']).strip() != "":
+                return str(row['short_name']).strip()
     
     # Fallback: extract from string format (e.g., "sp|O96019|ACTL6A" -> "ACTL6A")
     raw_id_str = str(raw_id)
@@ -1431,8 +1432,15 @@ if plot_button or st.session_state.plot_data_circos is not None:
                 st.error("No valid proteins selected.")
                 st.stop()
             
-            # Create clean names
-            protein_lengths['clean_name'] = protein_lengths['raw_id'].map(name_map_dict)
+            # Create clean names: prefer CSV clean_name (canonical, e.g. PBRM1) for Circos/Lollipop/Table consistency
+            if 'clean_name' in protein_lengths.columns:
+                mapped = protein_lengths['raw_id'].map(name_map_dict)
+                protein_lengths['clean_name'] = protein_lengths['clean_name'].where(
+                    protein_lengths['clean_name'].notna() & (protein_lengths['clean_name'].astype(str).str.strip() != ''),
+                    mapped
+                )
+            else:
+                protein_lengths['clean_name'] = protein_lengths['raw_id'].map(name_map_dict)
             protein_lengths = protein_lengths.dropna(subset=['clean_name'])
             
             # Create sector dataframe
@@ -1868,15 +1876,16 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             processed_links = processed_links.drop(columns=['_p1_is_target'], errors='ignore')
                             
                             # Get partner names using robust mapping
-                            # Create direct mapping from protein_lengths_master prioritizing real_name
+                            # Create direct mapping from protein_lengths_master (prefer clean_name for PBRM1 consistency)
                             id_to_realname = {}
-                            if 'real_name' in protein_lengths_master.columns:
-                                for _, row in protein_lengths_master.iterrows():
-                                    raw_id = row['raw_id']
-                                    if pd.notna(row['real_name']) and str(row['real_name']).strip() != "":
-                                        id_to_realname[raw_id] = row['real_name']
-                                    elif 'short_name' in row and pd.notna(row['short_name']) and str(row['short_name']).strip() != "":
-                                        id_to_realname[raw_id] = row['short_name']
+                            for _, row in protein_lengths_master.iterrows():
+                                rid = row['raw_id']
+                                if 'clean_name' in row.index and pd.notna(row.get('clean_name')) and str(row['clean_name']).strip() != "":
+                                    id_to_realname[rid] = str(row['clean_name']).strip()
+                                elif 'real_name' in row.index and pd.notna(row.get('real_name')) and str(row['real_name']).strip() != "":
+                                    id_to_realname[rid] = str(row['real_name']).strip()
+                                elif 'short_name' in row.index and pd.notna(row.get('short_name')) and str(row['short_name']).strip() != "":
+                                    id_to_realname[rid] = str(row['short_name']).strip()
                             
                             # Apply mapping with fallback function
                             processed_links['partner_name'] = processed_links['partner_id'].apply(
@@ -2109,15 +2118,16 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             st.divider()
                             
                             # Summary table - map partner_id to real_name with robust fallback
-                            # Create direct mapping from protein_lengths_master prioritizing real_name
+                            # Create direct mapping from protein_lengths_master (prefer clean_name for PBRM1 consistency)
                             id_to_realname = {}
-                            if 'real_name' in protein_lengths_master.columns:
-                                for _, row in protein_lengths_master.iterrows():
-                                    raw_id = row['raw_id']
-                                    if pd.notna(row['real_name']) and str(row['real_name']).strip() != "":
-                                        id_to_realname[raw_id] = row['real_name']
-                                    elif 'short_name' in row and pd.notna(row['short_name']) and str(row['short_name']).strip() != "":
-                                        id_to_realname[raw_id] = row['short_name']
+                            for _, row in protein_lengths_master.iterrows():
+                                rid = row['raw_id']
+                                if 'clean_name' in row.index and pd.notna(row.get('clean_name')) and str(row['clean_name']).strip() != "":
+                                    id_to_realname[rid] = str(row['clean_name']).strip()
+                                elif 'real_name' in row.index and pd.notna(row.get('real_name')) and str(row['real_name']).strip() != "":
+                                    id_to_realname[rid] = str(row['real_name']).strip()
+                                elif 'short_name' in row.index and pd.notna(row.get('short_name')) and str(row['short_name']).strip() != "":
+                                    id_to_realname[rid] = str(row['short_name']).strip()
                             
                             # Apply mapping with fallback function
                             processed_links['partner_real_name'] = processed_links['partner_id'].apply(
