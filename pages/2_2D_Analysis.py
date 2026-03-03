@@ -224,7 +224,7 @@ def load_protein_lengths():
         st.error(f"Error loading protein_lengths.csv: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=0)  # No cache - always load fresh data to pick up CSV updates
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def load_protein_annotations():
     """Load protein annotations CSV."""
     try:
@@ -379,6 +379,7 @@ def get_clean_partner_name(raw_id, name_map, protein_lengths_df=None):
     # Final fallback: return as-is
     return raw_id_str
 
+@st.cache_data(ttl=3600)
 def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
     """Load dataset based on the selected key."""
     if dataset_key not in FILE_INFO_LIST:
@@ -679,12 +680,6 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
     # Calculate label offset for x-axis domain
     label_offset = max_length * 0.02
     
-    # DEBUG: Verify x-axis range includes SMARCD1 SWIB (291-390)
-    _smarcd1_track = track_data[track_data['Protein'].astype(str).str.contains('SMARCD1|SMRD1', case=False, na=False)]
-    if not _smarcd1_track.empty:
-        _smarcd1_len = _smarcd1_track['Length'].iloc[0]
-        print("[DEBUG SMARCD1] x-axis max_length:", max_length, "| SMARCD1 track Length:", _smarcd1_len, "| SWIB 291-390 in range:", 390 <= max_length)
-    
     tracks = alt.Chart(track_data).mark_rect(
         color='black',
         height=15,
@@ -732,11 +727,6 @@ def generate_linear_plot_altair(plot_data, show_intra_links=True):
         # Map annotations to y_index
         annots_plot = annotations_bed.copy()
         annots_plot['y_index'] = annots_plot['chr'].map(protein_to_y)
-        # DEBUG: Check if SMARCD1 annotations get valid y_index (chr must match track_data Protein)
-        _dropped = annots_plot[annots_plot['chr'].astype(str).str.contains('SMARCD1|SMRD1', case=False, na=False) & annots_plot['y_index'].isna()]
-        if not _dropped.empty:
-            print("[DEBUG SMARCD1] Domain rows DROPPED - chr not in protein_to_y:", _dropped[['chr','start','end','name']].to_dict('records'))
-            print("[DEBUG SMARCD1] protein_to_y keys:", list(protein_to_y.keys()))
         annots_plot = annots_plot.dropna(subset=['y_index']).copy()
         
         if not annots_plot.empty:
@@ -1228,22 +1218,12 @@ if 'highlight_range' not in st.session_state:
     st.session_state.highlight_range = None
 
 # Load master data
-protein_lengths_master = load_protein_lengths()
-master_annotations_raw = load_protein_annotations()
-# Normalize annotation IDs to handle real_name vs raw_id format mismatches
-master_annotations = normalize_annotation_ids(master_annotations_raw.copy(), protein_lengths_master) if not master_annotations_raw.empty else master_annotations_raw
-
-# DEBUG: Temporary print for SMARCD1 mapping investigation
-_smarcd1_annots = master_annotations_raw[master_annotations_raw['ProteinID'].astype(str).str.contains('Q96GM5|SMARCD1|SMRD1', case=False, na=False)]
-_smarcd1_lengths = protein_lengths_master[protein_lengths_master['raw_id'].astype(str).str.contains('Q96GM5', na=False)]
-if not _smarcd1_annots.empty or not _smarcd1_lengths.empty:
-    print("[DEBUG SMARCD1] protein_annotation.csv ProteinID for SMARCD1:", _smarcd1_annots['ProteinID'].tolist() if not _smarcd1_annots.empty else "NONE")
-    print("[DEBUG SMARCD1] protein_lengths.csv raw_id for SMARCD1:", _smarcd1_lengths['raw_id'].tolist() if not _smarcd1_lengths.empty else "NONE")
-    if not master_annotations.empty and not _smarcd1_annots.empty:
-        _mapped = master_annotations[master_annotations['ProteinID'].isin(_smarcd1_annots['ProteinID'])][['ProteinID', 'MappedID']].drop_duplicates()
-        print("[DEBUG SMARCD1] After normalize - MappedID:", _mapped.to_dict('records') if not _mapped.empty else "NONE")
-
-loaded_sequences = load_fasta_sequences()
+with st.spinner("Loading protein data..."):
+    protein_lengths_master = load_protein_lengths()
+    master_annotations_raw = load_protein_annotations()
+    # Normalize annotation IDs to handle real_name vs raw_id format mismatches
+    master_annotations = normalize_annotation_ids(master_annotations_raw.copy(), protein_lengths_master) if not master_annotations_raw.empty else master_annotations_raw
+    loaded_sequences = load_fasta_sequences()
 
 # Title
 st.title("📊 2D Data Explorer")
@@ -1297,9 +1277,10 @@ with st.sidebar:
     st.header("🎨 Plot Controls")
     
     # Load dataset
-    links_df_orig, annotations_df_orig = load_dataset(
-        selected_dataset_key, protein_lengths_master, master_annotations
-    )
+    with st.spinner("Loading dataset..."):
+        links_df_orig, annotations_df_orig = load_dataset(
+            selected_dataset_key, protein_lengths_master, master_annotations
+        )
     
     if links_df_orig is None:
         st.error("Could not load dataset. Please check that data files exist in the 'data/' directory.")
@@ -1361,85 +1342,78 @@ if plot_button or st.session_state.plot_data_circos is not None:
         # Process data for plotting
         selected_raw_ids = [protein_options[p] for p in selected_proteins]
         
-        # Filter links
-        links_df = links_df_orig[
-            (links_df_orig['Protein1'].isin(selected_raw_ids)) &
-            (links_df_orig['Protein2'].isin(selected_raw_ids))
-        ].copy()
-        
-        # Filter annotations using normalized MappedID column
-        if not annotations_df_orig.empty and 'MappedID' in annotations_df_orig.columns:
-            annotations_df = annotations_df_orig[
-                annotations_df_orig['MappedID'].isin(selected_raw_ids)
+        with st.spinner("Processing plot data..."):
+            # Filter links
+            links_df = links_df_orig[
+                (links_df_orig['Protein1'].isin(selected_raw_ids)) &
+                (links_df_orig['Protein2'].isin(selected_raw_ids))
             ].copy()
-        elif not annotations_df_orig.empty:
-            # Fallback: if MappedID not available, try ProteinID
-            annotations_df = annotations_df_orig[
-                annotations_df_orig['ProteinID'].isin(selected_raw_ids)
-            ].copy()
-        else:
-            annotations_df = pd.DataFrame()
-        
-        # Get protein lengths
-        protein_lengths = protein_lengths_master[
-            protein_lengths_master['raw_id'].isin(selected_raw_ids)
-        ].copy()
-        
-        if protein_lengths.empty:
-            st.error("No valid proteins selected.")
-            st.stop()
-        
-        # Create clean names
-        protein_lengths['clean_name'] = protein_lengths['raw_id'].map(name_map_dict)
-        protein_lengths = protein_lengths.dropna(subset=['clean_name'])
-        
-        # Create sector dataframe
-        sector_df = protein_lengths[['clean_name', 'length']].copy()
-        sector_df.columns = ['name', 'end']
-        sector_df['start'] = 0
-        
-        # Map links to clean names
-        id_map = dict(zip(protein_lengths['raw_id'], protein_lengths['clean_name']))
-        links_df['P1_clean'] = links_df['Protein1'].map(id_map)
-        links_df['P2_clean'] = links_df['Protein2'].map(id_map)
-        links_df = links_df.dropna(subset=['P1_clean', 'P2_clean'])
-        
-        # Prepare annotations using MappedID (normalized) instead of ProteinID
-        if not annotations_df.empty and 'MappedID' in annotations_df.columns:
-            annotations_df['clean_name'] = annotations_df['MappedID'].map(id_map)
-        else:
-            # Fallback to ProteinID if MappedID not available
-            annotations_df['clean_name'] = annotations_df['ProteinID'].map(id_map)
-        annotations_bed = annotations_df.dropna(subset=['clean_name'])[
-            ['clean_name', 'StartRes', 'EndRes', 'AnnotName']
-        ].copy()
-        annotations_bed.columns = ['chr', 'start', 'end', 'name']
-        # DEBUG: Verify SMARCD1 SWIB domain in plotting_df
-        _smarcd1_bed = annotations_bed[annotations_bed['chr'].astype(str).str.contains('SMARCD1|SMRD1', case=False, na=False)]
-        if not _smarcd1_bed.empty:
-            print("[DEBUG SMARCD1] annotations_bed rows for SMARCD1 (SWIB 291-390):", _smarcd1_bed.to_dict('records'))
-            print("[DEBUG SMARCD1] id_map keys in selected proteins:", [k for k in id_map.keys() if 'Q96GM5' in str(k)])
-        
-        # Create color palette
-        all_proteins_in_plot = sorted(sector_df['name'].unique())
-        color_palette = {}
-        for protein in all_proteins_in_plot:
-            if protein in FIXED_PALETTE:
-                color_palette[protein] = FIXED_PALETTE[protein]
+            
+            # Filter annotations using normalized MappedID column
+            if not annotations_df_orig.empty and 'MappedID' in annotations_df_orig.columns:
+                annotations_df = annotations_df_orig[
+                    annotations_df_orig['MappedID'].isin(selected_raw_ids)
+                ].copy()
+            elif not annotations_df_orig.empty:
+                annotations_df = annotations_df_orig[
+                    annotations_df_orig['ProteinID'].isin(selected_raw_ids)
+                ].copy()
             else:
-                # Use a default color scheme for unmapped proteins
-                color_palette[protein] = px.colors.qualitative.Set3[
-                    len([p for p in all_proteins_in_plot if p in FIXED_PALETTE]) % len(px.colors.qualitative.Set3)
-                ]
-        
-        # Store plot data
-        plot_data = {
-            'links_df': links_df,
-            'sector_df': sector_df,
-            'annotations_bed': annotations_bed,
-            'annotations_df': annotations_df,
-            'color_palette': color_palette
-        }
+                annotations_df = pd.DataFrame()
+            
+            # Get protein lengths
+            protein_lengths = protein_lengths_master[
+                protein_lengths_master['raw_id'].isin(selected_raw_ids)
+            ].copy()
+            
+            if protein_lengths.empty:
+                st.error("No valid proteins selected.")
+                st.stop()
+            
+            # Create clean names
+            protein_lengths['clean_name'] = protein_lengths['raw_id'].map(name_map_dict)
+            protein_lengths = protein_lengths.dropna(subset=['clean_name'])
+            
+            # Create sector dataframe
+            sector_df = protein_lengths[['clean_name', 'length']].copy()
+            sector_df.columns = ['name', 'end']
+            sector_df['start'] = 0
+            
+            # Map links to clean names
+            id_map = dict(zip(protein_lengths['raw_id'], protein_lengths['clean_name']))
+            links_df['P1_clean'] = links_df['Protein1'].map(id_map)
+            links_df['P2_clean'] = links_df['Protein2'].map(id_map)
+            links_df = links_df.dropna(subset=['P1_clean', 'P2_clean'])
+            
+            # Prepare annotations
+            if not annotations_df.empty and 'MappedID' in annotations_df.columns:
+                annotations_df['clean_name'] = annotations_df['MappedID'].map(id_map)
+            else:
+                annotations_df['clean_name'] = annotations_df['ProteinID'].map(id_map)
+            annotations_bed = annotations_df.dropna(subset=['clean_name'])[
+                ['clean_name', 'StartRes', 'EndRes', 'AnnotName']
+            ].copy()
+            annotations_bed.columns = ['chr', 'start', 'end', 'name']
+            
+            # Create color palette
+            all_proteins_in_plot = sorted(sector_df['name'].unique())
+            color_palette = {}
+            for protein in all_proteins_in_plot:
+                if protein in FIXED_PALETTE:
+                    color_palette[protein] = FIXED_PALETTE[protein]
+                else:
+                    color_palette[protein] = px.colors.qualitative.Set3[
+                        len([p for p in all_proteins_in_plot if p in FIXED_PALETTE]) % len(px.colors.qualitative.Set3)
+                    ]
+            
+            # Store plot data
+            plot_data = {
+                'links_df': links_df,
+                'sector_df': sector_df,
+                'annotations_bed': annotations_bed,
+                'annotations_df': annotations_df,
+                'color_palette': color_palette
+            }
         
         if plot_button:
             st.session_state.plot_data_circos = plot_data
