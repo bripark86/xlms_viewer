@@ -98,7 +98,8 @@ FILE_INFO_LIST = {
     "ha_dpf2_ncp_proxl": {"stem": "HA_DPF2_NCP_xlinks-proteins-search-724-2025-10-09", "type": "standard_shortname"},
     "ss18_flag_proxl": {"stem": "SS18_Flag_xlinks-proteins-search-257-2025-10-09", "type": "standard_shortname"},
     "phf10_ha_proxl": {"stem": "PHF10_HA_xlinks-proteins-search-261-2025-10-09", "type": "standard_shortname"},
-    "ha_brd7_proxl": {"stem": "HA_BRD7_xlinks-proteins-search-259-2025-10-09", "type": "standard_shortname"}
+    "ha_brd7_proxl": {"stem": "HA_BRD7_xlinks-proteins-search-259-2025-10-09", "type": "standard_shortname"},
+    "chen_ncbaf_ncp_cxms": {"stem": "Chen_ncBAF_NCP_cxms", "type": "external"}
 }
 
 # CSS for sequence viewer
@@ -404,6 +405,18 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
             links['Protein2_acc'] = links['Protein2'].str.extract(r'\|([^|]+)\|', expand=False)
             
             annots = protein_annotations_df.copy()
+            
+        elif dataset_type == "external":
+            links_path = f"data/{stem}.csv"
+            if not os.path.exists(links_path):
+                return None, None
+            
+            links = pd.read_csv(links_path)
+            annots = protein_annotations_df.copy()
+            
+            # Extract accessions (same as standard - full UniProt ID format)
+            links['Protein1_acc'] = links['Protein1'].str.extract(r'\|([^|]+)\|', expand=False)
+            links['Protein2_acc'] = links['Protein2'].str.extract(r'\|([^|]+)\|', expand=False)
             
         else:
             # Proxl format (not fully implemented in original for these datasets)
@@ -1194,27 +1207,41 @@ st.markdown("Visualize cross-linking mass spectrometry data in 2D views")
 
 # Sidebar
 with st.sidebar:
-    st.header("📁 Dataset Selection")
+    st.markdown("### Data Source")
+    data_source = st.radio(
+        "Data Source",
+        options=["Internal (Kadoch Lab)", "External (Literature)"],
+        key="data_source_radio",
+        label_visibility="collapsed"
+    )
     
-    dataset_options = {
-        "Both CBAF and PBAF": "both_cbaf_pbaf",
-        "Canonical (Between Subunits)": "canonical_between",
-        "Canonical (Intra- and Inter-)": "canonical_intra",
-        "cBAF + Nucleosome": "nucleosome",
-        "PBAF Only": "pbaf",
-        "ncBAF (Inter-subunit)": "ncbaf_inter1",
-        "ncBAF (Intra-subunit)": "ncbaf_intra1",
-        "cBAF GR (Proxl)": "cbaf_gr_proxl",
-        "cBAF GR NCP (Proxl)": "cbaf_gr_ncp_proxl",
-        "HA DPF2 (Proxl)": "ha_dpf2_proxl",
-        "HA DPF2 NCP (Proxl)": "ha_dpf2_ncp_proxl",
-        "SS18 Flag (Proxl)": "ss18_flag_proxl",
-        "HA PHF10 (Proxl)": "phf10_ha_proxl",
-        "HA BRD7 (Proxl)": "ha_brd7_proxl"
-    }
+    st.markdown("---")
+    st.markdown("### Dataset Selection")
+    
+    if data_source == "Internal (Kadoch Lab)":
+        dataset_options = {
+            "Both CBAF and PBAF": "both_cbaf_pbaf",
+            "Canonical (Between Subunits)": "canonical_between",
+            "Canonical (Intra- and Inter-)": "canonical_intra",
+            "cBAF + Nucleosome": "nucleosome",
+            "PBAF Only": "pbaf",
+            "ncBAF (Inter-subunit)": "ncbaf_inter1",
+            "ncBAF (Intra-subunit)": "ncbaf_intra1",
+            "cBAF GR (Proxl)": "cbaf_gr_proxl",
+            "cBAF GR NCP (Proxl)": "cbaf_gr_ncp_proxl",
+            "HA DPF2 (Proxl)": "ha_dpf2_proxl",
+            "HA DPF2 NCP (Proxl)": "ha_dpf2_ncp_proxl",
+            "SS18 Flag (Proxl)": "ss18_flag_proxl",
+            "HA PHF10 (Proxl)": "phf10_ha_proxl",
+            "HA BRD7 (Proxl)": "ha_brd7_proxl"
+        }
+    else:
+        dataset_options = {
+            "Chen_ncBAF_NCP_cxms.csv": "chen_ncbaf_ncp_cxms"
+        }
     
     selected_dataset_display = st.selectbox(
-        "1. Select Dataset",
+        "Select Dataset",
         options=list(dataset_options.keys()),
         key="dataset_selector"
     )
@@ -1644,7 +1671,7 @@ if plot_button or st.session_state.plot_data_circos is not None:
             
             # Check if dataset type is supported
             dataset_type = FILE_INFO_LIST[selected_dataset_key]['type']
-            if dataset_type not in ['standard', 'standard_shortname']:
+            if dataset_type not in ['standard', 'standard_shortname', 'external']:
                 st.warning("Lollipop View is not supported for Proxl datasets.")
             else:
                 # Target protein selector
