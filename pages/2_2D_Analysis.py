@@ -1709,34 +1709,69 @@ if plot_button or st.session_state.plot_data_circos is not None:
                     target_display_name = name_map_dict.get(target_protein_id, target_protein_id)
                     
                     # Get target protein data
-                    target_length = protein_lengths_master[
+                    target_row = protein_lengths_master[
                         protein_lengths_master['raw_id'] == target_protein_id
-                    ]['length'].values
+                    ]
+                    target_length = target_row['length'].values
                     
                     if len(target_length) > 0:
                         target_length = target_length[0]
                         
-                        # Filter links for target protein
-                        target_links = links_df_orig[
-                            (links_df_orig['Protein1'] == target_protein_id) |
-                            (links_df_orig['Protein2'] == target_protein_id)
-                        ].copy()
+                        # Build set of equivalent IDs for matching (handles Chen sp|Q96GM5|SMRD1 vs internal sp|Q96GM5|SMARCD1)
+                        target_protein_ids = {target_protein_id}
+                        target_accession = None
+                        if not target_row.empty:
+                            if 'accession' in target_row.columns:
+                                acc = target_row['accession'].iloc[0]
+                                if pd.notna(acc):
+                                    target_accession = str(acc).strip()
+                            if target_accession and 'short_name' in target_row.columns:
+                                short = target_row['short_name'].iloc[0]
+                                if pd.notna(short):
+                                    target_protein_ids.add(f"sp|{target_accession}|{str(short).strip()}")
+                        if not target_accession and "|" in str(target_protein_id):
+                            target_accession = str(target_protein_id).split("|")[1]
+                        
+                        # Filter links: match by raw_id, clean name variants, or accession (Protein1_acc/Protein2_acc)
+                        has_acc = 'Protein1_acc' in links_df_orig.columns and 'Protein2_acc' in links_df_orig.columns
+                        if has_acc and target_accession:
+                            target_links = links_df_orig[
+                                (links_df_orig['Protein1'].isin(target_protein_ids)) |
+                                (links_df_orig['Protein2'].isin(target_protein_ids)) |
+                                (links_df_orig['Protein1_acc'] == target_accession) |
+                                (links_df_orig['Protein2_acc'] == target_accession)
+                            ].copy()
+                        else:
+                            target_links = links_df_orig[
+                                (links_df_orig['Protein1'].isin(target_protein_ids)) |
+                                (links_df_orig['Protein2'].isin(target_protein_ids))
+                            ].copy()
+                        
+                        st.write(f"Debug: Found {len(target_links)} links for {target_display_name}")
                         
                         if not target_links.empty:
-                            # Process links
+                            # Process links (support both exact raw_id and accession/alternate-ID match)
                             processed_links = target_links.copy()
+                            def _is_p1_target(row):
+                                p1_match = row['Protein1'] in target_protein_ids
+                                if not p1_match and has_acc and target_accession:
+                                    p1_acc = row.get('Protein1_acc')
+                                    p1_match = p1_acc is not None and str(p1_acc) == str(target_accession)
+                                return p1_match
+                            processed_links['_p1_is_target'] = processed_links.apply(_is_p1_target, axis=1)
                             processed_links['target_pos'] = processed_links.apply(
-                                lambda row: row['LinkPos1'] if row['Protein1'] == target_protein_id else row['LinkPos2'],
+                                lambda row: row['LinkPos1'] if row['_p1_is_target'] else row['LinkPos2'],
                                 axis=1
                             )
                             processed_links['partner_id'] = processed_links.apply(
-                                lambda row: row['Protein2'] if row['Protein1'] == target_protein_id else row['Protein1'],
+                                lambda row: row['Protein2'] if row['_p1_is_target'] else row['Protein1'],
                                 axis=1
                             )
                             processed_links['partner_pos'] = processed_links.apply(
-                                lambda row: row['LinkPos2'] if row['Protein1'] == target_protein_id else row['LinkPos1'],
+                                lambda row: row['LinkPos2'] if row['_p1_is_target'] else row['LinkPos1'],
                                 axis=1
                             )
+                            processed_links = processed_links.drop(columns=['_p1_is_target'], errors='ignore')
                             
                             # Get partner names using robust mapping
                             # Create direct mapping from protein_lengths_master prioritizing real_name
@@ -1753,9 +1788,9 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             processed_links['partner_name'] = processed_links['partner_id'].apply(
                                 lambda x: get_clean_partner_name(x, id_to_realname, protein_lengths_master)
                             )
-                            # For self-links, use target name
+                            # For self-links, use target name (partner_id may be alternate format e.g. sp|Q96GM5|SMRD1)
                             processed_links.loc[
-                                processed_links['partner_id'] == target_protein_id,
+                                processed_links['partner_id'].isin(target_protein_ids),
                                 'partner_name'
                             ] = target_display_name
                             
@@ -1999,9 +2034,9 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 lambda x: get_clean_partner_name(x, id_to_realname, protein_lengths_master)
                             )
                             
-                            # For self-links, use target display name
+                            # For self-links, use target display name (partner_id may be alternate format)
                             processed_links.loc[
-                                processed_links['partner_id'] == target_protein_id,
+                                processed_links['partner_id'].isin(target_protein_ids),
                                 'partner_real_name'
                             ] = target_display_name
                             
