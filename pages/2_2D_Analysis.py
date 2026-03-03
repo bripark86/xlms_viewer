@@ -1329,10 +1329,24 @@ with st.sidebar:
     
     # Create selector options
     if 'real_name' in relevant_proteins.columns:
-        display_names = relevant_proteins.apply(
-            lambda row: row['real_name'] if pd.notna(row['real_name']) and row['real_name'] != "" else row['short_name'],
-            axis=1
-        )
+        has_clean = 'clean_name' in relevant_proteins.columns
+        has_short = 'short_name' in relevant_proteins.columns
+
+        def _display_label(row):
+            real = str(row['real_name']).strip() if pd.notna(row['real_name']) and str(row['real_name']).strip() != '' else ''
+            short = str(row['short_name']).strip() if has_short and pd.notna(row['short_name']) and str(row['short_name']).strip() != '' else ''
+            clean = str(row['clean_name']).strip() if has_clean and pd.notna(row['clean_name']) and str(row['clean_name']).strip() != '' else ''
+
+            # Prefer canonical clean_name (e.g. PBRM1) when real_name just duplicates short_name
+            if clean and (not real or real == short):
+                return clean
+            if real:
+                return real
+            if short:
+                return short
+            return clean or real or short
+
+        display_names = relevant_proteins.apply(_display_label, axis=1)
     else:
         display_names = relevant_proteins['short_name']
     
