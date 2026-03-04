@@ -2020,7 +2020,24 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             fig_lollipop = generate_lollipop_plot(lollipop_plot_data, height_factor=height_factor)
                             
                             if fig_lollipop:
-                                st.plotly_chart(fig_lollipop, use_container_width=True)
+                                # Layout: main lollipop plot (left) and partner color legend (right)
+                                plot_col, legend_col = st.columns([4, 1])
+                                
+                                with plot_col:
+                                    st.plotly_chart(fig_lollipop, use_container_width=True)
+                                
+                                with legend_col:
+                                    st.subheader("Subunit Legend")
+                                    # Unique partners present in current view (already standardized via get_standardized_display_name)
+                                    for partner in all_partners:
+                                        color = partner_color_palette.get(partner, "#CCCCCC")
+                                        legend_item_html = f"""
+                                        <div style="display:flex;align-items:center;margin-bottom:4px;">
+                                            <div style="width:12px;height:12px;border-radius:50%;background-color:{color};margin-right:6px;border:1px solid #555;"></div>
+                                            <span style="font-size:0.85rem;">{partner}</span>
+                                        </div>
+                                        """
+                                        st.markdown(legend_item_html, unsafe_allow_html=True)
                                 
                                 # Download buttons for Lollipop Plot
                                 col_dl1, col_dl2 = st.columns(2)
