@@ -1325,9 +1325,9 @@ with st.sidebar:
     else:
         # External (Literature): Select Paper/Dataset sub-dropdown
         external_paper_options = {
-            "Chen et al. (2020)": "chen_ncbaf_ncp_cxms",
-            "Yanhui Xu et al. (2021)": "yanhuixu_2021_pbaf_ncp_cxms",
-            "Yanhui Xu et al. (2022)": "yanhuixu_2022_pbaf_ncp_cxms"
+            "ncBAF_NCP_Chen et al. (2020)": "chen_ncbaf_ncp_cxms",
+            "PBAF_NCP_Yanhui Xu et al. (2021)": "yanhuixu_2021_pbaf_ncp_cxms",
+            "PBAF_NCP_Yanhui Xu et al. (2022)": "yanhuixu_2022_pbaf_ncp_cxms"
         }
         selected_paper_display = st.selectbox(
             "Select Paper/Dataset",
