@@ -85,12 +85,19 @@ FIXED_PALETTE = {
 
 # Global subunit color map for Lollipop View (standardized subunit names -> distinct colors)
 SUBUNIT_COLOR_MAP = {
-    "ARID2": "#E41A1C",    # red
-    "SMARCD1": "#377EB8",  # blue
-    "ACTL6A": "#4DAF4A",   # green
-    "SMARCA4": "#984EA3",  # purple
-    "PBRM1": "#FF7F00",    # orange
-    "H33": "#FFFF33",      # yellow
+    "ARID2": "#E41A1C",     # red
+    "SMARCD1": "#377EB8",   # blue
+    "ACTL6A": "#4DAF4A",    # green
+    "SMARCA4": "#984EA3",   # purple
+    "PBRM1": "#FF7F00",     # orange
+    # Histones and GLTSCR1L, all unique
+    "GLTSCR1L": "#8DD3C7",  # teal
+    "H2B": "#BEBADA",       # lavender
+    "H4": "#FB8072",        # coral
+    "H2A": "#80B1D3",       # light blue
+    "HIST1H2AA": "#80B1D3", # alias of H2A
+    "H33": "#FDB462",       # orange for H3/H33 group
+    "H3": "#FDB462",
 }
 
 # Global Alias Resolver: primary gene name -> all variants used across datasets (internal mapping, no separate CSV)
@@ -102,6 +109,8 @@ SYNONYM_MAP = {
     'SMARCD1': ['SMARCD1', 'SMRD1', 'BAF60A', 'sp|Q96GM5|SMARCD1', 'sp|Q96GM5|SMRD1'],
     'SMARCA2': ['SMARCA2', 'SMCA2', 'BRM', 'sp|P51531|SMARCA2'],
     'ARID2': ['ARID2', 'sp|Q68CP9|ARID2'],
+    # Histones: map aliases to canonical names used in color map
+    'H2A': ['H2A', 'HIST1H2AA', 'sp|Q96QV6|HIST1H2AA'],
     'H33': ['H33', 'H3', 'HIST1H3A', 'sp|P84243|H33_HUMAN'],
 }
 # Reverse: alias -> primary for id_map
@@ -2009,15 +2018,19 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             # Create color palette for partners (standardized names via get_standardized_display_name)
                             all_partners = sorted(processed_links['partner_name'].unique())
                             partner_color_palette = {}
+                            # Dynamic fallback palette to avoid overlaps for unmapped subunits
+                            alphabet_colors = px.colors.qualitative.Alphabet
+                            fallback_idx = 0
                             for partner in all_partners:
-                                # Use standardized subunit name color if available, else fall back to FIXED_PALETTE, else neutral grey
+                                # Use standardized subunit name color if available, else FIXED_PALETTE, else dynamic Alphabet color
                                 std_name = get_standardized_display_name(partner)
                                 if std_name in SUBUNIT_COLOR_MAP:
                                     partner_color_palette[partner] = SUBUNIT_COLOR_MAP[std_name]
                                 elif std_name in FIXED_PALETTE:
                                     partner_color_palette[partner] = FIXED_PALETTE[std_name]
                                 else:
-                                    partner_color_palette[partner] = "#808080"
+                                    partner_color_palette[partner] = alphabet_colors[fallback_idx % len(alphabet_colors)]
+                                    fallback_idx += 1
                             
                             # Prepare plot data
                             lollipop_plot_data = {
