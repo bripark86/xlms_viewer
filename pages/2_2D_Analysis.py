@@ -83,6 +83,16 @@ FIXED_PALETTE = {
     "BICRA": "#FF4500", "BICRAL": "#FF6347", "BRD9": "#FF7F50"
 }
 
+# Global subunit color map for Lollipop View (standardized subunit names -> distinct colors)
+SUBUNIT_COLOR_MAP = {
+    "ARID2": "#E41A1C",    # red
+    "SMARCD1": "#377EB8",  # blue
+    "ACTL6A": "#4DAF4A",   # green
+    "SMARCA4": "#984EA3",  # purple
+    "PBRM1": "#FF7F00",    # orange
+    "H33": "#FFFF33",      # yellow
+}
+
 # Global Alias Resolver: primary gene name -> all variants used across datasets (internal mapping, no separate CSV)
 # Used for filtering (.isin) and Circos/Lollipop rendering so lines have a destination.
 SYNONYM_MAP = {
@@ -1996,16 +2006,18 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                 target_annotations = pd.DataFrame()
                             
                             
-                            # Create color palette for partners
+                            # Create color palette for partners (standardized names via get_standardized_display_name)
                             all_partners = sorted(processed_links['partner_name'].unique())
                             partner_color_palette = {}
                             for partner in all_partners:
-                                if partner in FIXED_PALETTE:
-                                    partner_color_palette[partner] = FIXED_PALETTE[partner]
+                                # Use standardized subunit name color if available, else fall back to FIXED_PALETTE, else neutral grey
+                                std_name = get_standardized_display_name(partner)
+                                if std_name in SUBUNIT_COLOR_MAP:
+                                    partner_color_palette[partner] = SUBUNIT_COLOR_MAP[std_name]
+                                elif std_name in FIXED_PALETTE:
+                                    partner_color_palette[partner] = FIXED_PALETTE[std_name]
                                 else:
-                                    partner_color_palette[partner] = px.colors.qualitative.Set3[
-                                        len([p for p in all_partners if p in FIXED_PALETTE]) % len(px.colors.qualitative.Set3)
-                                    ]
+                                    partner_color_palette[partner] = "#808080"
                             
                             # Prepare plot data
                             lollipop_plot_data = {
