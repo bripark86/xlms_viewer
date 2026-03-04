@@ -1987,82 +1987,92 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             )
                             processed_links.loc[partner_is_target, 'partner_name'] = target_display_name
                             
-                            # Calculate y positions
-                            height_factor = st.slider(
-                                "Lollipop Height Factor:",
-                                min_value=0.2,
-                                max_value=2.0,
-                                value=0.6,
-                                step=0.1,
-                                key="height_factor_lollipop"
-                            )
+                            # Respect "Show Self-Links (Intra-Protein)" setting: optionally drop self-links
+                            if not show_intra_links:
+                                try:
+                                    # Self-links are those where the partner is the target (after alias/standardization)
+                                    processed_links = processed_links[~partner_is_target].copy()
+                                except Exception:
+                                    # Fail-safe: if something goes wrong, fall back to original processed_links
+                                    pass
                             
-                            processed_links = processed_links.sort_values(['target_pos', 'partner_name'])
-                            processed_links['y_position'] = processed_links.groupby('target_pos').cumcount() * -height_factor
-                            
-                            # Get target annotations with normalized ID matching
-                            if not annotations_df_orig.empty and 'MappedID' in annotations_df_orig.columns:
-                                # Filter using normalized MappedID
-                                target_annotations = annotations_df_orig[
-                                    annotations_df_orig['MappedID'] == target_protein_id
-                                ].copy()
-                            elif not annotations_df_orig.empty:
-                                # Fallback: if MappedID not available, try ProteinID
-                                target_annotations = annotations_df_orig[
-                                    annotations_df_orig['ProteinID'] == target_protein_id
-                                ].copy()
-                            else:
-                                target_annotations = pd.DataFrame()
-                            
-                            
-                            # Create color palette for partners (standardized names via get_standardized_display_name)
-                            all_partners = sorted(processed_links['partner_name'].unique())
-                            partner_color_palette = {}
-                            # Dynamic fallback palette to avoid overlaps for unmapped subunits
-                            alphabet_colors = px.colors.qualitative.Alphabet
-                            fallback_idx = 0
-                            for partner in all_partners:
-                                # Use standardized subunit name color if available, else FIXED_PALETTE, else dynamic Alphabet color
-                                std_name = get_standardized_display_name(partner)
-                                if std_name in SUBUNIT_COLOR_MAP:
-                                    partner_color_palette[partner] = SUBUNIT_COLOR_MAP[std_name]
-                                elif std_name in FIXED_PALETTE:
-                                    partner_color_palette[partner] = FIXED_PALETTE[std_name]
+                            if not processed_links.empty:
+                                # Calculate y positions
+                                height_factor = st.slider(
+                                    "Lollipop Height Factor:",
+                                    min_value=0.2,
+                                    max_value=2.0,
+                                    value=0.6,
+                                    step=0.1,
+                                    key="height_factor_lollipop"
+                                )
+                                
+                                processed_links = processed_links.sort_values(['target_pos', 'partner_name'])
+                                processed_links['y_position'] = processed_links.groupby('target_pos').cumcount() * -height_factor
+                                
+                                # Get target annotations with normalized ID matching
+                                if not annotations_df_orig.empty and 'MappedID' in annotations_df_orig.columns:
+                                    # Filter using normalized MappedID
+                                    target_annotations = annotations_df_orig[
+                                        annotations_df_orig['MappedID'] == target_protein_id
+                                    ].copy()
+                                elif not annotations_df_orig.empty:
+                                    # Fallback: if MappedID not available, try ProteinID
+                                    target_annotations = annotations_df_orig[
+                                        annotations_df_orig['ProteinID'] == target_protein_id
+                                    ].copy()
                                 else:
-                                    partner_color_palette[partner] = alphabet_colors[fallback_idx % len(alphabet_colors)]
-                                    fallback_idx += 1
-                            
-                            # Prepare plot data
-                            lollipop_plot_data = {
-                                'plot_data': processed_links,
-                                'target_length': target_length,
-                                'target_annotations': target_annotations,
-                                'color_palette': partner_color_palette,
-                                'target_name': target_display_name
-                            }
-                            
-                            # Generate plot
-                            fig_lollipop = generate_lollipop_plot(lollipop_plot_data, height_factor=height_factor)
-                            
-                            if fig_lollipop:
-                                # Layout: main lollipop plot (left) and partner color legend (right)
-                                plot_col, legend_col = st.columns([4, 1])
+                                    target_annotations = pd.DataFrame()
                                 
-                                with plot_col:
-                                    st.plotly_chart(fig_lollipop, use_container_width=True)
                                 
-                                with legend_col:
-                                    st.subheader("Subunit Legend")
-                                    # Unique partners present in current view (already standardized via get_standardized_display_name)
-                                    for partner in all_partners:
-                                        color = partner_color_palette.get(partner, "#CCCCCC")
-                                        legend_item_html = f"""
-                                        <div style="display:flex;align-items:center;margin-bottom:4px;">
-                                            <div style="width:12px;height:12px;border-radius:50%;background-color:{color};margin-right:6px;border:1px solid #555;"></div>
-                                            <span style="font-size:0.85rem;">{partner}</span>
-                                        </div>
-                                        """
-                                        st.markdown(legend_item_html, unsafe_allow_html=True)
+                                # Create color palette for partners (standardized names via get_standardized_display_name)
+                                all_partners = sorted(processed_links['partner_name'].unique())
+                                partner_color_palette = {}
+                                # Dynamic fallback palette to avoid overlaps for unmapped subunits
+                                alphabet_colors = px.colors.qualitative.Alphabet
+                                fallback_idx = 0
+                                for partner in all_partners:
+                                    # Use standardized subunit name color if available, else FIXED_PALETTE, else dynamic Alphabet color
+                                    std_name = get_standardized_display_name(partner)
+                                    if std_name in SUBUNIT_COLOR_MAP:
+                                        partner_color_palette[partner] = SUBUNIT_COLOR_MAP[std_name]
+                                    elif std_name in FIXED_PALETTE:
+                                        partner_color_palette[partner] = FIXED_PALETTE[std_name]
+                                    else:
+                                        partner_color_palette[partner] = alphabet_colors[fallback_idx % len(alphabet_colors)]
+                                        fallback_idx += 1
+                                
+                                # Prepare plot data
+                                lollipop_plot_data = {
+                                    'plot_data': processed_links,
+                                    'target_length': target_length,
+                                    'target_annotations': target_annotations,
+                                    'color_palette': partner_color_palette,
+                                    'target_name': target_display_name
+                                }
+                                
+                                # Generate plot
+                                fig_lollipop = generate_lollipop_plot(lollipop_plot_data, height_factor=height_factor)
+                                
+                                if fig_lollipop:
+                                    # Layout: main lollipop plot (left) and partner color legend (right)
+                                    plot_col, legend_col = st.columns([4, 1])
+                                    
+                                    with plot_col:
+                                        st.plotly_chart(fig_lollipop, use_container_width=True)
+                                    
+                                    with legend_col:
+                                        st.subheader("Subunit Legend")
+                                        # Unique partners present in current view (already standardized via get_standardized_display_name)
+                                        for partner in all_partners:
+                                            color = partner_color_palette.get(partner, "#CCCCCC")
+                                            legend_item_html = f"""
+                                            <div style="display:flex;align-items:center;margin-bottom:4px;">
+                                                <div style="width:12px;height:12px;border-radius:50%;background-color:{color};margin-right:6px;border:1px solid #555;"></div>
+                                                <span style="font-size:0.85rem;">{partner}</span>
+                                            </div>
+                                            """
+                                            st.markdown(legend_item_html, unsafe_allow_html=True)
                                 
                                 # Download buttons for Lollipop Plot
                                 col_dl1, col_dl2 = st.columns(2)
@@ -2089,72 +2099,72 @@ if plot_button or st.session_state.plot_data_circos is not None:
                                     except Exception:
                                         st.info("PDF download requires kaleido. Install with: pip install kaleido")
                             
-                            # Domain Annotations & Details
-                            with st.expander("📘 Domain Annotations & Details", expanded=False):
-                                if not target_annotations.empty:
-                                    # Prepare annotation display dataframe
-                                    annot_display = target_annotations.copy()
-                                    
-                                    # Select and rename columns for display
-                                    display_cols = {}
-                                    if 'AnnotName' in annot_display.columns:
-                                        display_cols['AnnotName'] = 'Domain'
-                                    if 'StartRes' in annot_display.columns:
-                                        display_cols['StartRes'] = 'Start'
-                                    if 'EndRes' in annot_display.columns:
-                                        display_cols['EndRes'] = 'End'
-                                    # Check for color column (case-insensitive)
-                                    color_col = None
-                                    for col in annot_display.columns:
-                                        if col.lower() in ['color', 'colour', 'hex', 'hexcolor']:
-                                            color_col = col
-                                            display_cols[col] = 'Color'
-                                            break
-                                    
-                                    # Create display dataframe with selected columns
-                                    annot_display_filtered = annot_display[list(display_cols.keys())].copy()
-                                    annot_display_filtered = annot_display_filtered.rename(columns=display_cols)
-                                    
-                                    # Configure column display
-                                    column_config = {}
-                                    if 'Domain' in annot_display_filtered.columns:
-                                        column_config['Domain'] = st.column_config.TextColumn(
-                                            "Domain",
-                                            help="Domain or annotation name"
+                                # Domain Annotations & Details
+                                with st.expander("📘 Domain Annotations & Details", expanded=False):
+                                    if not target_annotations.empty:
+                                        # Prepare annotation display dataframe
+                                        annot_display = target_annotations.copy()
+                                        
+                                        # Select and rename columns for display
+                                        display_cols = {}
+                                        if 'AnnotName' in annot_display.columns:
+                                            display_cols['AnnotName'] = 'Domain'
+                                        if 'StartRes' in annot_display.columns:
+                                            display_cols['StartRes'] = 'Start'
+                                        if 'EndRes' in annot_display.columns:
+                                            display_cols['EndRes'] = 'End'
+                                        # Check for color column (case-insensitive)
+                                        color_col = None
+                                        for col in annot_display.columns:
+                                            if col.lower() in ['color', 'colour', 'hex', 'hexcolor']:
+                                                color_col = col
+                                                display_cols[col] = 'Color'
+                                                break
+                                        
+                                        # Create display dataframe with selected columns
+                                        annot_display_filtered = annot_display[list(display_cols.keys())].copy()
+                                        annot_display_filtered = annot_display_filtered.rename(columns=display_cols)
+                                        
+                                        # Configure column display
+                                        column_config = {}
+                                        if 'Domain' in annot_display_filtered.columns:
+                                            column_config['Domain'] = st.column_config.TextColumn(
+                                                "Domain",
+                                                help="Domain or annotation name"
+                                            )
+                                        if 'Start' in annot_display_filtered.columns:
+                                            column_config['Start'] = st.column_config.NumberColumn(
+                                                "Start",
+                                                format="%d",
+                                                help="Start residue position"
+                                            )
+                                        if 'End' in annot_display_filtered.columns:
+                                            column_config['End'] = st.column_config.NumberColumn(
+                                                "End",
+                                                format="%d",
+                                                help="End residue position"
+                                            )
+                                        if 'Color' in annot_display_filtered.columns:
+                                            # Try to display as text column (colored pills require more complex handling)
+                                            column_config['Color'] = st.column_config.TextColumn(
+                                                "Color",
+                                                help="Hex color code for the domain"
+                                            )
+                                        
+                                        # Display the dataframe
+                                        st.dataframe(
+                                            annot_display_filtered,
+                                            use_container_width=True,
+                                            hide_index=True,
+                                            column_config=column_config
                                         )
-                                    if 'Start' in annot_display_filtered.columns:
-                                        column_config['Start'] = st.column_config.NumberColumn(
-                                            "Start",
-                                            format="%d",
-                                            help="Start residue position"
-                                        )
-                                    if 'End' in annot_display_filtered.columns:
-                                        column_config['End'] = st.column_config.NumberColumn(
-                                            "End",
-                                            format="%d",
-                                            help="End residue position"
-                                        )
-                                    if 'Color' in annot_display_filtered.columns:
-                                        # Try to display as text column (colored pills require more complex handling)
-                                        column_config['Color'] = st.column_config.TextColumn(
-                                            "Color",
-                                            help="Hex color code for the domain"
-                                        )
-                                    
-                                    # Display the dataframe
-                                    st.dataframe(
-                                        annot_display_filtered,
-                                        use_container_width=True,
-                                        hide_index=True,
-                                        column_config=column_config
-                                    )
-                                else:
-                                    st.info("No specific domain annotations found for this protein.")
+                                    else:
+                                        st.info("No specific domain annotations found for this protein.")
                             
-                            st.divider()
+                                st.divider()
                             
-                            # Sequence viewer
-                            st.subheader("Interactive Protein Sequence")
+                                # Sequence viewer
+                                st.subheader("Interactive Protein Sequence")
                             
                             # Legend
                             st.markdown("""
@@ -2257,8 +2267,6 @@ if plot_button or st.session_state.plot_data_circos is not None:
                             summary_df = summary_df.sort_values('Number of Cross-links', ascending=False)
                             summary_df.columns = ['Partner Subunit', 'Number of Cross-links']
                             st.dataframe(summary_df, width='stretch', hide_index=True)
-                        else:
-                            st.info("No cross-links found in the selected dataset.")
         
 
 else:
