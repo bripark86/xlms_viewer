@@ -115,7 +115,7 @@ def get_aliases_for_protein(display_name, raw_id=None):
         s.update(str(a).strip() for a in SYNONYM_MAP[primary])
     return s
 
-# File info mapping (exact port from R)
+# File info mapping (exact port from R + literature datasets)
 FILE_INFO_LIST = {
     "both_cbaf_pbaf": {"stem": "Both_CBAF_and_PBAF_xi_net_between_subunit", "type": "standard"},
     "canonical_between": {"stem": "Canonical_xi_net_between_subunit", "type": "standard"},
@@ -131,9 +131,22 @@ FILE_INFO_LIST = {
     "ss18_flag_proxl": {"stem": "SS18_Flag_xlinks-proteins-search-257-2025-10-09", "type": "standard_shortname"},
     "phf10_ha_proxl": {"stem": "PHF10_HA_xlinks-proteins-search-261-2025-10-09", "type": "standard_shortname"},
     "ha_brd7_proxl": {"stem": "HA_BRD7_xlinks-proteins-search-259-2025-10-09", "type": "standard_shortname"},
-    "chen_ncbaf_ncp_cxms": {"stem": "Chen_ncBAF_NCP_cxms", "type": "external"},
-    "yanhuixu_2021_pbaf_ncp_cxms": {"stem": "YanhuiXu_2021_pBAF_NCP_cxms", "type": "external"},
-    "yanhuixu_2022_pbaf_ncp_cxms": {"stem": "YanhuiXu_2022_pBAF_NCP_cxms", "type": "external"}
+    # Literature / external datasets (explicit paths so we don't have to edit logic elsewhere)
+    "chen_ncbaf_ncp_cxms": {
+        "stem": "Chen_ncBAF_NCP_cxms",
+        "path": "data/Chen_ncBAF_NCP_cxms.csv",
+        "type": "Literature",
+    },
+    "yanhuixu_2021_pbaf_ncp_cxms": {
+        "stem": "YanhuiXu_2021_pBAF_NCP_cxms",
+        "path": "data/YanhuiXu_2021_pBAF_NCP_cxms.csv",
+        "type": "Literature",
+    },
+    "yanhuixu_2022_pbaf_ncp_cxms": {
+        "stem": "YanhuiXu_2022_pBAF_NCP_cxms",
+        "path": "data/YanhuiXu_2022_pBAF_NCP_cxms.csv",
+        "type": "Literature",
+    },
 }
 
 # CSS for sequence viewer
@@ -420,15 +433,13 @@ def get_clean_partner_name(raw_id, name_map, protein_lengths_df=None):
 @st.cache_data(ttl=3600)
 def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
     """Load dataset based on the selected key."""
-    # Support both static entries in FILE_INFO_LIST (internal + curated external)
-    # and dynamic external CSVs where dataset_key is the filename stem.
-    if dataset_key in FILE_INFO_LIST:
-        info = FILE_INFO_LIST[dataset_key]
-        stem = info['stem']
-        dataset_type = info['type']
-    else:
-        stem = dataset_key
-        dataset_type = "external"
+    if dataset_key not in FILE_INFO_LIST:
+        return None, None
+    
+    info = FILE_INFO_LIST[dataset_key]
+    stem = info.get('stem')
+    dataset_type = info.get('type')
+    path = info.get('path')
     
     try:
         if dataset_type == "standard":
@@ -472,8 +483,9 @@ def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
             
             annots = protein_annotations_df.copy()
             
-        elif dataset_type == "external":
-            links_path = f"data/{stem}.csv"
+        elif dataset_type in ["external", "Literature"]:
+            # External / literature CSVs live in data/ and always use the full CSV path
+            links_path = path if path else f"data/{stem}.csv"
             if not os.path.exists(links_path):
                 return None, None
             
@@ -1326,29 +1338,18 @@ with st.sidebar:
         )
         selected_dataset_key = dataset_options[selected_dataset_display]
     else:
-        # External (Literature): dynamically discover *_cxms.csv files in data/
-        external_paper_options = {}
-        try:
-            for fname in sorted(os.listdir("data")):
-                if fname.endswith("_cxms.csv"):
-                    stem = fname[:-4]  # drop .csv
-                    # Drop trailing '_cxms' and convert underscores to spaces for display
-                    display_stem = stem[:-5] if stem.endswith("_cxms") else stem
-                    display_name = display_stem.replace("_", " ")
-                    external_paper_options[display_name] = stem
-        except Exception:
-            external_paper_options = {}
-
-        if not external_paper_options:
-            st.warning("No external *_cxms.csv datasets found in the data/ directory.")
-            selected_dataset_key = None
-        else:
-            selected_paper_display = st.selectbox(
-                "Select Paper/Dataset",
-                options=list(external_paper_options.keys()),
-                key="external_paper_selector"
-            )
-            selected_dataset_key = external_paper_options[selected_paper_display]
+        # External (Literature): curated list of known literature datasets
+        external_paper_options = {
+            "ncBAF_NCP_Chen et al. (2020)": "chen_ncbaf_ncp_cxms",
+            "PBAF_NCP_Yanhui Xu et al. (2021)": "yanhuixu_2021_pbaf_ncp_cxms",
+            "PBAF_NCP_Yanhui Xu et al. (2022)": "yanhuixu_2022_pbaf_ncp_cxms",
+        }
+        selected_paper_display = st.selectbox(
+            "Select Paper/Dataset",
+            options=list(external_paper_options.keys()),
+            key="external_paper_selector"
+        )
+        selected_dataset_key = external_paper_options[selected_paper_display]
     
     st.divider()
     
@@ -1861,7 +1862,7 @@ if plot_button or st.session_state.plot_data_circos is not None:
             
             # Check if dataset type is supported
             dataset_type = FILE_INFO_LIST[selected_dataset_key]['type']
-            if dataset_type not in ['standard', 'standard_shortname', 'external']:
+            if dataset_type not in ['standard', 'standard_shortname', 'external', 'Literature']:
                 st.warning("Lollipop View is not supported for Proxl datasets.")
             else:
                 # Target protein selector
