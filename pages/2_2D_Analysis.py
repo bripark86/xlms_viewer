@@ -132,7 +132,8 @@ FILE_INFO_LIST = {
     "phf10_ha_proxl": {"stem": "PHF10_HA_xlinks-proteins-search-261-2025-10-09", "type": "standard_shortname"},
     "ha_brd7_proxl": {"stem": "HA_BRD7_xlinks-proteins-search-259-2025-10-09", "type": "standard_shortname"},
     "chen_ncbaf_ncp_cxms": {"stem": "Chen_ncBAF_NCP_cxms", "type": "external"},
-    "yanhuixu_2021_pbaf_ncp_cxms": {"stem": "YanhuiXu_2021_pBAF_NCP_cxms", "type": "external"}
+    "yanhuixu_2021_pbaf_ncp_cxms": {"stem": "YanhuiXu_2021_pBAF_NCP_cxms", "type": "external"},
+    "yanhuixu_2022_pbaf_ncp_cxms": {"stem": "YanhuiXu_2022_pBAF_NCP_cxms", "type": "external"}
 }
 
 # CSS for sequence viewer
@@ -1325,7 +1326,8 @@ with st.sidebar:
         # External (Literature): Select Paper/Dataset sub-dropdown
         external_paper_options = {
             "Chen et al. (2020)": "chen_ncbaf_ncp_cxms",
-            "Yanhui Xu et al. (2021)": "yanhuixu_2021_pbaf_ncp_cxms"
+            "Yanhui Xu et al. (2021)": "yanhuixu_2021_pbaf_ncp_cxms",
+            "Yanhui Xu et al. (2022)": "yanhuixu_2022_pbaf_ncp_cxms"
         }
         selected_paper_display = st.selectbox(
             "Select Paper/Dataset",
