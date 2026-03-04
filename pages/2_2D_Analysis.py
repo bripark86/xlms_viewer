@@ -420,12 +420,15 @@ def get_clean_partner_name(raw_id, name_map, protein_lengths_df=None):
 @st.cache_data(ttl=3600)
 def load_dataset(dataset_key, protein_lengths_df, protein_annotations_df):
     """Load dataset based on the selected key."""
-    if dataset_key not in FILE_INFO_LIST:
-        return None, None
-    
-    info = FILE_INFO_LIST[dataset_key]
-    stem = info['stem']
-    dataset_type = info['type']
+    # Support both static entries in FILE_INFO_LIST (internal + curated external)
+    # and dynamic external CSVs where dataset_key is the filename stem.
+    if dataset_key in FILE_INFO_LIST:
+        info = FILE_INFO_LIST[dataset_key]
+        stem = info['stem']
+        dataset_type = info['type']
+    else:
+        stem = dataset_key
+        dataset_type = "external"
     
     try:
         if dataset_type == "standard":
@@ -1323,18 +1326,29 @@ with st.sidebar:
         )
         selected_dataset_key = dataset_options[selected_dataset_display]
     else:
-        # External (Literature): Select Paper/Dataset sub-dropdown
-        external_paper_options = {
-            "ncBAF_NCP_Chen et al. (2020)": "chen_ncbaf_ncp_cxms",
-            "PBAF_NCP_Yanhui Xu et al. (2021)": "yanhuixu_2021_pbaf_ncp_cxms",
-            "PBAF_NCP_Yanhui Xu et al. (2022)": "yanhuixu_2022_pbaf_ncp_cxms"
-        }
-        selected_paper_display = st.selectbox(
-            "Select Paper/Dataset",
-            options=list(external_paper_options.keys()),
-            key="external_paper_selector"
-        )
-        selected_dataset_key = external_paper_options[selected_paper_display]
+        # External (Literature): dynamically discover *_cxms.csv files in data/
+        external_paper_options = {}
+        try:
+            for fname in sorted(os.listdir("data")):
+                if fname.endswith("_cxms.csv"):
+                    stem = fname[:-4]  # drop .csv
+                    # Drop trailing '_cxms' and convert underscores to spaces for display
+                    display_stem = stem[:-5] if stem.endswith("_cxms") else stem
+                    display_name = display_stem.replace("_", " ")
+                    external_paper_options[display_name] = stem
+        except Exception:
+            external_paper_options = {}
+
+        if not external_paper_options:
+            st.warning("No external *_cxms.csv datasets found in the data/ directory.")
+            selected_dataset_key = None
+        else:
+            selected_paper_display = st.selectbox(
+                "Select Paper/Dataset",
+                options=list(external_paper_options.keys()),
+                key="external_paper_selector"
+            )
+            selected_dataset_key = external_paper_options[selected_paper_display]
     
     st.divider()
     
